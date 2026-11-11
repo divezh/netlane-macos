@@ -3,6 +3,7 @@ import NetlaneCore
 
 /// «Подключение»: status and the big button in the middle, the locations under them, and the
 /// «Подключение» block on the right. Both columns stay where they are in every state.
+/// As on Windows, the spare height of a tall window goes above and below the content, not only below it.
 struct HomeView: View {
     @EnvironmentObject var model: AppModel
 
@@ -14,14 +15,17 @@ struct HomeView: View {
                     LocationTable().padding(.top, 22)
                 }
                 .frame(minWidth: 340, idealWidth: 360, maxWidth: 400)
-                Group {
-                    if model.view == .error { ErrorBlock() } else { ConnectionBlock() }
+                // Both states are laid out and the hidden one only made invisible, so the column is as
+                // tall as the taller of them and failing or connecting never moves the page.
+                ZStack(alignment: .topLeading) {
+                    ConnectionBlock().shown(model.view != .error)
+                    ErrorBlock().shown(model.view == .error)
                 }
                 .frame(width: 276)
                 .padding(.top, 14)
             }
-            .padding(.horizontal, 24).padding(.top, 26)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 24).padding(.vertical, 26)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             Rectangle().fill(Theme.line).frame(height: 1).padding(.horizontal, 24)
             HStack {
                 Text("v" + AppInfo.version)
@@ -100,7 +104,7 @@ private struct LocationTable: View {
             .font(.system(size: 11)).foregroundColor(Theme.faint)
             .padding(.horizontal, 12).frame(height: 26)
             Rectangle().fill(Theme.line).frame(height: 1)
-            ScrollView {
+            ScrollView(showsIndicators: model.state.servers.count > 6) {
                 VStack(spacing: 2) {
                     ForEach(model.state.servers) { server in row(server) }
                     Button(action: { model.showAdd = true }) {
@@ -122,8 +126,13 @@ private struct LocationTable: View {
                 }
                 .padding(.top, 4)
             }
+            // A ScrollView takes all the height it is offered; capped at its content, the page can be centred.
+            .frame(maxHeight: contentHeight)
         }
     }
+
+    /// Rows (34 + 2 spacing), the dashed «Добавить» button and the ping note under it.
+    private var contentHeight: CGFloat { 4 + CGFloat(model.state.servers.count) * 36 + 32 + 26 }
 
     private var pingNote: String {
         if model.pinging { return "Проверяю пинг…" }
@@ -204,13 +213,13 @@ private struct ConnectionBlock: View {
                     .toggleStyle(.switch).labelsHidden().tint(Theme.accent)
                     .help("Блокировать интернет, если VPN оборвался. Применяется при следующем подключении.")
             }
-            if model.view == .connected || model.view == .reconnecting {
-                VStack(spacing: 10) {
-                    SpeedLane(title: "Приём", arrow: "↓", color: Theme.accent, values: model.downHistory, current: model.downRate)
-                    SpeedLane(title: "Отдача", arrow: "↑", color: Theme.upload, values: model.upHistory, current: model.upRate)
-                }
-                .padding(.top, 12)
+            // Laid out in every state (only hidden when idle), so the page keeps its place on connect.
+            VStack(spacing: 10) {
+                SpeedLane(title: "Приём", arrow: "↓", color: Theme.accent, values: model.downHistory, current: model.downRate)
+                SpeedLane(title: "Отдача", arrow: "↑", color: Theme.upload, values: model.upHistory, current: model.upRate)
             }
+            .padding(.top, 12)
+            .shown(model.view == .connected || model.view == .reconnecting)
         }
     }
 
@@ -256,5 +265,12 @@ private struct ErrorBlock: View {
             }
             .padding(.top, 2)
         }
+    }
+}
+
+private extension View {
+    /// Keeps the view in the layout but invisible and out of reach of the mouse, keyboard and VoiceOver.
+    func shown(_ visible: Bool) -> some View {
+        opacity(visible ? 1 : 0).allowsHitTesting(visible).accessibilityHidden(!visible).disabled(!visible)
     }
 }
