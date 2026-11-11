@@ -55,7 +55,10 @@ final class ProfileTests: XCTestCase {
         p.dnsServers = ["1.1.1.1", "tls://dns.example"]
         p.routing = Routing(mode: "selective", destinations: ["Example.com", "10.1.0.0/16"], applications: [AppRule(name: "telegram.exe", action: "vpn")])
         let config = try p.engineConfig()
-        XCTAssertTrue(config.hasPrefix("loglevel = \"info\"\nkillswitch_enabled = true\nvpn_mode = \"selective\"\nexclusions = ["))
+        XCTAssertTrue(config.hasPrefix("loglevel = \"info\"\nkillswitch_enabled = true\ndns_all_through_vpn = true\nvpn_mode = \"selective\"\nexclusions = ["))
+        p.dnsServers = []
+        XCTAssertFalse(try p.engineConfig().contains("dns_all_through_vpn"))
+        p.dnsServers = ["1.1.1.1", "tls://dns.example"]
         XCTAssertTrue(config.contains("upstream_protocol = \"http3\"\nanti_dpi = true\ndns_upstreams = [\"1.1.1.1\", \"tls://dns.example\"]\n[listener.tun]\nchange_system_dns = true\nincluded_routes = [\"0.0.0.0/0\", \"2000::/3\"]\n"))
         XCTAssertTrue(config.contains("exclusions = [\"example.com\", \"10.1.0.0/16\"]\n[[application_rules]]\nprocess_name = \"telegram\"\naction = \"vpn\"\n[endpoint]\n"))
         XCTAssertFalse(config.contains("device_name"))

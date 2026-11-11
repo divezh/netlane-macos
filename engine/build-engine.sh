@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds the Netlane engine for macOS: TrustTunnel Client at a pinned commit with our patches
 #   0001 — per-application routing and kill-switch retention (shared with the Windows client),
-#   0002 — the macOS part: finding the process that owns a connection (libproc).
+#   0002 — the macOS part: finding the process that owns a connection (libproc),
+#   0003 — dns_all_through_vpn: every DNS query to the configured servers through the VPN.
 # Output: engine/dist/trusttunnel_client (universal: arm64 + x86_64) and engine/dist/LICENSE.
 #
 # Needs: Xcode or Command Line Tools, cmake, ninja, python3, rustup (installs the pinned toolchain).

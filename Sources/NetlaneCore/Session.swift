@@ -129,6 +129,6 @@ public enum EngineEvent: Equatable {
 /// application (on macOS — by process name, helpers and bundles included) and the kill-switch retention
 /// shared with the Windows client. Built by engine/build-engine.sh.
 public enum EngineSpec {
-    public static let version = "1.1.11-netlane.1"
+    public static let version = "1.1.11-netlane.2"
     public static let executableName = "trusttunnel_client"
 }

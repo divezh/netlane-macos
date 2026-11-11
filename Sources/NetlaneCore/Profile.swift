@@ -182,7 +182,10 @@ public struct Profile: Codable, Equatable, Sendable {
             : "[listener.socks]\naddress = \"127.0.0.1:\(socksPort)\"\n"
         // Application rules need the tunnel: through a SOCKS listener the engine cannot see the owner.
         let routing = try copy.routing.engineConfig()
-        return "loglevel = \"info\"\nkillswitch_enabled = " + (socksPort == 0 && copy.killSwitch ? "true" : "false") + "\n" + routing.keys
+        // With DNS servers set (by the user or the panel) every query goes to them through the VPN; otherwise the
+        // engine sends names outside the rule set to the home resolver, apps included (engine/upstream/0003).
+        let dnsEverywhere = copy.dnsServers.isEmpty ? "" : "dns_all_through_vpn = true\n"
+        return "loglevel = \"info\"\nkillswitch_enabled = " + (socksPort == 0 && copy.killSwitch ? "true" : "false") + "\n" + dnsEverywhere + routing.keys
             + (socksPort == 0 ? routing.applicationRules : "") + endpoint + listener
     }
 
