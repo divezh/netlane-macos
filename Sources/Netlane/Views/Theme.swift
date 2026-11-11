@@ -187,27 +187,33 @@ struct SpeedLane: View {
     }
 }
 
-/// The look of a drop-down choice: the value, a chevron, a border like the quiet buttons.
+/// The value shown in a drop-down. Only text: macOS puts any image of a menu label before the text,
+/// so the arrow is drawn by `dropdownFrame` instead.
 struct DropdownLabel: View {
     let text: String
     var body: some View {
-        HStack(spacing: 6) {
-            Text(text).font(.system(size: 12)).foregroundColor(Theme.ink).lineLimit(1)
-            Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundColor(Theme.faint)
-        }
+        Text(text).font(.system(size: 12)).foregroundColor(Theme.ink).lineLimit(1)
     }
 }
 
 extension View {
-    /// A Menu drawn as a bordered drop-down (the system borderless menu has no frame on a dark ground).
+    /// A Menu drawn as a bordered drop-down with one arrow pointing down on the right.
     func dropdownFrame() -> some View {
         self.menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .padding(.horizontal, 10)
+            .padding(.leading, 10)
+            .padding(.trailing, 26)
             .frame(minHeight: 28)
             .background(RoundedRectangle(cornerRadius: 8).fill(Theme.raised))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line))
+            .overlay(alignment: .trailing) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(Theme.faint)
+                    .padding(.trailing, 10)
+                    .allowsHitTesting(false)
+            }
             .contentShape(Rectangle())
     }
 
