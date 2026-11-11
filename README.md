@@ -4,6 +4,11 @@
 
 VPN-клиент на базе [TrustTunnel](https://github.com/TrustTunnel/TrustTunnelClient): подписки, наборы правил для сайтов и программ, Kill Switch. macOS 13+, одна сборка для Intel и Apple Silicon. Версия для Windows — [netlane-windows](https://github.com/divezh/netlane-windows).
 
+<p align="center">
+  <img src="assets/screenshots/home.png" width="49%" alt="Главный экран: подключено, локации с пингом, графики скорости">
+  <img src="assets/screenshots/rules.png" width="49%" alt="Правила: сайты и программы, которые идут через VPN">
+</p>
+
 ## Установка
 
 Скачайте **[Netlane-macos.pkg](https://github.com/divezh/netlane-macos/releases/latest/download/Netlane-macos.pkg)** и откройте. Приложение не подписано Apple, поэтому при первом запуске: «Системные настройки» → «Конфиденциальность и безопасность» → «Всё равно открыть».
