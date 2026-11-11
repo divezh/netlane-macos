@@ -3,13 +3,15 @@
 #   scripts/build-app.sh            build, test, package
 #   scripts/build-app.sh --no-test  skip the tests
 # Needs macOS 13+ with Xcode or the Command Line Tools. The app is signed ad hoc (no Apple Developer ID).
+# Without engine/dist/trusttunnel_client the engine is built first (engine/build-engine.sh, long the first time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' Sources/NetlaneCore/Support.swift | head -1)
-ENGINE_URL=$(sed -n 's/.*archiveUrl = "\(.*\)"/\1/p' Sources/NetlaneCore/Session.swift)
-ENGINE_SHA=$(sed -n 's/.*archiveSha256 = "\(.*\)"/\1/p' Sources/NetlaneCore/Session.swift)
-[ -n "$VERSION" ] && [ -n "$ENGINE_URL" ] && [ -n "$ENGINE_SHA" ] || { echo "cannot read version or engine pin" >&2; exit 1; }
+[ -n "$VERSION" ] || { echo "cannot read the version" >&2; exit 1; }
+# The engine with application routing (engine/build-engine.sh). ENGINE_BINARY points to a ready one (CI).
+ENGINE="${ENGINE_BINARY:-engine/dist/trusttunnel_client}"
+if [ ! -f "$ENGINE" ]; then engine/build-engine.sh; ENGINE=engine/dist/trusttunnel_client; fi
 echo "Netlane $VERSION"
 
 if [ "${1:-}" != "--no-test" ]; then swift test; fi
@@ -26,21 +28,10 @@ cp scripts/install-helper.sh scripts/uninstall-helper.sh "$APP/Contents/Resource
 cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 sed "s/@VERSION@/$VERSION/g" packaging/Info.plist > "$APP/Contents/Info.plist"
 
-# The pinned engine: the official TrustTunnel client, checked by SHA-256 before it is unpacked.
-CACHE=.build/engine
-mkdir -p "$CACHE"
-ARCHIVE="$CACHE/$(basename "$ENGINE_URL")"
-[ -f "$ARCHIVE" ] || curl -fsSL --retry 3 -o "$ARCHIVE" "$ENGINE_URL"
-ACTUAL=$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)
-if [ "$ACTUAL" != "$ENGINE_SHA" ]; then rm -f "$ARCHIVE"; echo "engine archive hash mismatch: $ACTUAL" >&2; exit 1; fi
-rm -rf "$CACHE/unpacked"; mkdir -p "$CACHE/unpacked"
-tar -xzf "$ARCHIVE" -C "$CACHE/unpacked"
-ENGINE=$(find "$CACHE/unpacked" -type f -name trusttunnel_client | head -1)
-[ -n "$ENGINE" ] || { echo "trusttunnel_client is not in the archive" >&2; exit 1; }
 cp "$ENGINE" "$APP/Contents/Resources/engine/trusttunnel_client"
 chmod 755 "$APP/Contents/Resources/engine/trusttunnel_client"
-LICENSE_FILE=$(find "$CACHE/unpacked" -type f -iname 'LICENSE*' | head -1)
-[ -z "$LICENSE_FILE" ] || cp "$LICENSE_FILE" "$APP/Contents/Resources/engine/LICENSE.txt"
+ENGINE_LICENSE="$(dirname "$ENGINE")/LICENSE"
+[ -f "$ENGINE_LICENSE" ] && cp "$ENGINE_LICENSE" "$APP/Contents/Resources/engine/LICENSE.txt"
 
 # Icon: assets/icon-1024.png when present (sharp at every size), else the 128 px one.
 MASTER=assets/icon.png
@@ -53,9 +44,9 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
-# Ad-hoc signatures: Apple Silicon refuses unsigned code. The engine keeps its publisher's signature if it has one.
+# Ad-hoc signatures: Apple Silicon refuses unsigned code.
 codesign --force --sign - "$APP/Contents/Resources/NetlaneHelper"
-codesign --verify "$APP/Contents/Resources/engine/trusttunnel_client" 2>/dev/null || codesign --force --sign - "$APP/Contents/Resources/engine/trusttunnel_client"
+codesign --force --sign - "$APP/Contents/Resources/engine/trusttunnel_client"
 codesign --force --sign - "$APP"
 codesign --verify --strict "$APP"
 

@@ -180,7 +180,10 @@ public struct Profile: Codable, Equatable, Sendable {
         let listener = socksPort == 0
             ? "[listener.tun]\nchange_system_dns = true\nincluded_routes = [\"0.0.0.0/0\", \"2000::/3\"]\nexcluded_routes = [" + Profile.excludedRoutes.map(Text.tomlQuote).joined(separator: ", ") + "]\n"
             : "[listener.socks]\naddress = \"127.0.0.1:\(socksPort)\"\n"
-        return "loglevel = \"info\"\nkillswitch_enabled = " + (socksPort == 0 && copy.killSwitch ? "true" : "false") + "\n" + (try copy.routing.engineConfig()) + endpoint + listener
+        // Application rules need the tunnel: through a SOCKS listener the engine cannot see the owner.
+        let routing = try copy.routing.engineConfig()
+        return "loglevel = \"info\"\nkillswitch_enabled = " + (socksPort == 0 && copy.killSwitch ? "true" : "false") + "\n" + routing.keys
+            + (socksPort == 0 ? routing.applicationRules : "") + endpoint + listener
     }
 
     /// The config as written to the log: the password is never shown.

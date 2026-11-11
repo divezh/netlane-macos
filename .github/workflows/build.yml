@@ -22,7 +22,46 @@ permissions:
   attestations: write
 
 jobs:
+  # The engine with application routing: TrustTunnel Client built from source with engine/upstream/*.patch.
+  # Cached by the patches and the build script, so it is rebuilt only when they change.
+  engine:
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Cached engine
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: engine/dist
+          key: engine-${{ hashFiles('engine/build-engine.sh', 'engine/upstream/*.patch', 'Sources/NetlaneCore/Session.swift') }}
+
+      - name: Conan cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('engine/upstream/*.patch') }}
+          restore-keys: conan-${{ runner.os }}-
+
+      - name: Build and test the engine
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          command -v rustup >/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"; }
+          engine/build-engine.sh
+
+      - name: Upload engine
+        uses: actions/upload-artifact@v5
+        with:
+          name: engine
+          path: engine/dist
+          if-no-files-found: error
+
   build:
+    needs: engine
     runs-on: macos-15
     steps:
       - name: Checkout
@@ -35,7 +74,15 @@ jobs:
           version=$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' Sources/NetlaneCore/Support.swift | head -1)
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then echo "Tag $GITHUB_REF_NAME does not match AppInfo.version $version" >&2; exit 1; fi
 
+      - name: Download engine
+        uses: actions/download-artifact@v5
+        with:
+          name: engine
+          path: engine/dist
+
       - name: Test and build
+        env:
+          ENGINE_BINARY: engine/dist/trusttunnel_client
         run: scripts/build-app.sh
 
       - name: Attest build provenance

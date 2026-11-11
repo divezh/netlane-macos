@@ -64,6 +64,9 @@ struct RuleSetEditor: View {
     @State private var name: String
     @State private var mode: String
     @State private var addresses: String
+    @State private var apps: String
+    /// Full Windows paths from the panel or a file: kept as they are, a Mac cannot use them.
+    @State private var windowsPaths: [AppRule]
     @State private var problem: String?
     @State private var confirmDelete = false
 
@@ -72,10 +75,16 @@ struct RuleSetEditor: View {
         _name = State(initialValue: ruleSet.name)
         _mode = State(initialValue: ruleSet.routing.mode)
         _addresses = State(initialValue: ruleSet.routing.destinations.joined(separator: "\n"))
+        _apps = State(initialValue: ruleSet.routing.macApplications.map(\.name).joined(separator: "\n"))
+        _windowsPaths = State(initialValue: ruleSet.routing.applications.filter { $0.executable != nil })
     }
 
     private var readOnly: Bool { ruleSet.builtin || ruleSet.managed }
-    private var changed: Bool { name != ruleSet.name || mode != ruleSet.routing.mode || lines != ruleSet.routing.destinations }
+    private var appLines: [String] { apps.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+    private var changed: Bool {
+        name != ruleSet.name || mode != ruleSet.routing.mode || lines != ruleSet.routing.destinations
+            || appLines != ruleSet.routing.macApplications.map(\.name) || windowsPaths != ruleSet.routing.applications.filter { $0.executable != nil }
+    }
     private var lines: [String] { addresses.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
 
     var body: some View {
@@ -88,21 +97,26 @@ struct RuleSetEditor: View {
                 TextField("Название набора", text: $name).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
             }
             if !ruleSet.builtin {
-                SegmentedChoice(options: [Choice("selective", "Через VPN — только эти адреса"), Choice("general", "Через VPN всё, кроме этих")], selected: mode) { if !readOnly { mode = $0 } }
+                SegmentedChoice(options: [Choice("selective", "Через VPN — только эти"), Choice("general", "Через VPN всё, кроме этих")], selected: mode) { if !readOnly { mode = $0 } }
                     .frame(maxWidth: 440).disabled(readOnly)
-                Text(mode == "selective" ? "Адреса из списка идут через VPN, всё остальное — напрямую." : "Адреса из списка идут напрямую, всё остальное — через VPN.")
+                Text(mode == "selective" ? "Эти сайты и программы идут через VPN, всё остальное — напрямую." : "Эти сайты и программы идут напрямую, всё остальное — через VPN.")
                     .font(.system(size: 11)).foregroundColor(Theme.faint)
-                TextEditor(text: $addresses)
-                    .font(.system(size: 12, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 9).fill(Theme.card))
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.line))
-                    .disabled(readOnly)
-                Text("По одному в строке: example.com, *.example.com, 203.0.113.7 или 203.0.113.0/24. Сейчас: " + Plural.addresses(lines.count) + " из 256.")
-                    .font(.system(size: 11)).foregroundColor(Theme.faint).fixedSize(horizontal: false, vertical: true)
-                if !ruleSet.routing.applications.isEmpty {
-                    Text("В наборе есть правила для приложений Windows (" + String(ruleSet.routing.applications.count) + "). На macOS они не применяются, но сохраняются при экспорте.")
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Сайты и адреса").font(.system(size: 11)).foregroundColor(Theme.faint)
+                        editor($addresses)
+                        Text("example.com, *.example.com, 203.0.113.7 или 203.0.113.0/24. Сейчас: " + Plural.addresses(lines.count) + " из 256.")
+                            .font(.system(size: 11)).foregroundColor(Theme.faint).fixedSize(horizontal: false, vertical: true)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Программы").font(.system(size: 11)).foregroundColor(Theme.faint)
+                        editor($apps)
+                        Text("Имя процесса как в «Мониторинге системы», например Jivo. Его вспомогательные процессы (Jivo Helper, Jivo Helper (GPU) …) входят сами.")
+                            .font(.system(size: 11)).foregroundColor(Theme.faint).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if !windowsPaths.isEmpty {
+                    Text("Ещё " + String(windowsPaths.count) + " правил с полным путём Windows (C:\\…). На Mac они не действуют и сохраняются для Windows-клиента.")
                         .font(.system(size: 11)).foregroundColor(Theme.warning).fixedSize(horizontal: false, vertical: true)
                 }
             } else { Spacer() }
@@ -127,8 +141,32 @@ struct RuleSetEditor: View {
         }
     }
 
+    private func editor(_ text: Binding<String>) -> some View {
+        TextEditor(text: text)
+            .font(.system(size: 12, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 9).fill(Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.line))
+            .disabled(readOnly)
+    }
+
+    /// The programs as rules: a program already in the set keeps its route, a new one follows the mode
+    /// (only these through the VPN → «vpn», everything but these → «direct»).
+    private func applicationRules() throws -> [AppRule] {
+        var result = windowsPaths
+        for line in appLines {
+            let name: String
+            do { name = try Routing.applicationName(line) }
+            catch let error as FormatError { throw FormatError("«" + line + "»: " + error.message) }
+            let known = ruleSet.routing.applications.first { $0.name?.lowercased() == name.lowercased() }
+            result.append(AppRule(name: name, action: known?.action ?? (mode == "selective" ? "vpn" : "direct")))
+        }
+        return result
+    }
+
     private func draft() throws -> Routing {
-        var routing = Routing(mode: mode, destinations: lines, applications: ruleSet.routing.applications)
+        var routing = Routing(mode: mode, destinations: lines, applications: try applicationRules())
         for line in lines {
             do { _ = try Routing.normalizeDestination(line) }
             catch let error as FormatError { throw FormatError("«" + line + "»: " + error.message) }
@@ -148,6 +186,7 @@ struct RuleSetEditor: View {
             }
             if ok {
                 addresses = routing.destinations.joined(separator: "\n")
+                apps = routing.macApplications.map(\.name).joined(separator: "\n")
                 name = name.trimmingCharacters(in: .whitespaces)
                 if wasSelected && model.isActive { model.say("Правила сохранены. Применятся при следующем подключении.") }
             }
@@ -183,7 +222,9 @@ struct RuleSetEditor: View {
             // The file replaces the draft; nothing is stored until «Сохранить».
             mode = routing.mode
             addresses = routing.destinations.joined(separator: "\n")
-            problem = routing.applications.isEmpty ? nil : "Правила для приложений из файла на macOS не применяются и не импортированы."
+            apps = routing.macApplications.map(\.name).joined(separator: "\n")
+            windowsPaths = routing.applications.filter { $0.executable != nil }
+            problem = nil
         } catch { problem = (error as? FormatError)?.message ?? "Не удалось прочитать файл правил." }
     }
 }

@@ -1,0 +1,417 @@
+diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/application_routes.cpp
+index 244a6e6..e4130a0 100644
+--- a/trusttunnel/src/application_routes.cpp
++++ b/trusttunnel/src/application_routes.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include <algorithm>
+ #include <cctype>
++#include <cstdint>
+ #include <cstring>
+ 
+ #ifdef _WIN32
+@@ -9,6 +10,15 @@
+ #include <windows.h>
+ #endif
+ 
++#ifdef __APPLE__
++#include <arpa/inet.h>
++#include <libproc.h>
++#include <unistd.h>
++#include <netinet/in.h>
++#include <sys/proc_info.h>
++#include <sys/socket.h>
++#endif
++
+ namespace ag {
+ 
+ static std::string normalized_path(std::string_view path) {
+@@ -20,6 +30,19 @@ static std::string normalized_path(std::string_view path) {
+     return result;
+ }
+ 
++#ifdef __APPLE__
++static bool has_control_characters(std::string_view text) {
++    return std::ranges::any_of(text, [](unsigned char c) {
++        return c < 0x20 || c == 0x7F;
++    });
++}
++
++// macOS: an absolute POSIX path of the executable, or of an application bundle (…/Name.app).
++bool valid_application_path(std::string_view path) {
++    return path.size() >= 2 && path.size() <= 4096 && path[0] == '/' && path.find("/../") == std::string_view::npos
++            && !path.ends_with("/..") && !has_control_characters(path);
++}
++#else
+ bool valid_application_path(std::string_view path) {
+     if (path.size() < 8 || path.size() > 4096 || !std::isalpha(static_cast<unsigned char>(path[0])) || path[1] != ':'
+             || path[2] != '\\' || path.find("\\..\\") != std::string_view::npos
+@@ -33,7 +56,15 @@ bool valid_application_path(std::string_view path) {
+     });
+     return suffix == ".exe";
+ }
++#endif
+ 
++#ifdef __APPLE__
++// macOS: the executable's file name as Activity Monitor shows it, e.g. "Jivo" (Clash PROCESS-NAME).
++bool valid_process_name(std::string_view name) {
++    return !name.empty() && name.size() <= 255 && name.find('/') == std::string_view::npos && name != "."
++            && name != ".." && !has_control_characters(name);
++}
++#else
+ bool valid_process_name(std::string_view name) {
+     if (name.size() < 5 || name.size() > 255 || name.find_first_of("\\/:*?\"<>|\r\n") != std::string_view::npos
+             || name.find('\0') != std::string_view::npos) {
+@@ -45,6 +76,7 @@ bool valid_process_name(std::string_view name) {
+     });
+     return suffix == ".exe";
+ }
++#endif
+ 
+ static std::string_view file_name(std::string_view path) {
+     size_t slash = path.find_last_of("\\/");
+@@ -100,6 +132,50 @@ bool application_names_equal(std::string_view first, std::string_view second) {
+ #endif
+ }
+ 
++#ifdef __APPLE__
++static bool ascii_iequal(std::string_view a, std::string_view b) {
++    return std::ranges::equal(a, b, [](unsigned char x, unsigned char y) {
++        return std::tolower(x) == std::tolower(y);
++    });
++}
++
++static bool ascii_istarts_with(std::string_view text, std::string_view prefix) {
++    return text.size() >= prefix.size() && ascii_iequal(text.substr(0, prefix.size()), prefix);
++}
++
++// A process-name rule "Jivo" matches the app's own executable and the helpers an Electron or Chromium app
++// starts for it ("Jivo Helper", "Jivo Helper (GPU)", "Jivo Helper (Renderer)", …), and anything that runs
++// from inside Jivo.app. Network traffic of such apps comes from the helpers, not from the main process.
++static bool apple_name_matches(std::string_view rule, std::string_view path) {
++    std::string_view name = file_name(path);
++    if (ascii_iequal(rule, name)) {
++        return true;
++    }
++    std::string helper = std::string(rule) + " Helper";
++    if (ascii_iequal(name, helper) || ascii_istarts_with(name, helper + " (")) {
++        return true;
++    }
++    std::string bundle = "/" + std::string(rule) + ".app/";
++    for (size_t at = 0; at + bundle.size() <= path.size(); ++at) {
++        if (ascii_iequal(path.substr(at, bundle.size()), bundle)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++// A path rule matches the executable itself or, for a bundle (…/Name.app), anything inside it.
++static bool apple_path_matches(std::string_view rule, std::string_view path) {
++    if (ascii_iequal(rule, path)) {
++        return true;
++    }
++    std::string_view folder = rule.ends_with('/') ? rule.substr(0, rule.size() - 1) : rule;
++    bool bundle = folder.size() > 4 && ascii_iequal(folder.substr(folder.size() - 4), ".app");
++    return bundle && path.size() > folder.size() && path[folder.size()] == '/'
++            && ascii_iequal(path.substr(0, folder.size()), folder);
++}
++#endif
++
+ VpnConnectAction application_route(const std::vector<ApplicationRule> &rules, const std::optional<std::string> &owner) {
+     if (rules.empty()) {
+         return VPN_CA_DEFAULT;
+@@ -108,8 +184,13 @@ VpnConnectAction application_route(const std::vector<ApplicationRule> &rules, co
+         return VPN_CA_FORCE_REDIRECT;
+     }
+     for (const auto &rule : rules) {
++#ifdef __APPLE__
++        bool matches = rule.by_name ? apple_name_matches(rule.executable, *owner)
++                                    : apple_path_matches(rule.executable, *owner);
++#else
+         bool matches = rule.by_name ? application_names_equal(rule.executable, file_name(*owner))
+                                     : application_paths_equal(rule.executable, *owner);
++#endif
+         if (matches) {
+             return rule.action;
+         }
+@@ -214,9 +295,119 @@ static std::optional<DWORD> connection_owner(const sockaddr *source, const socka
+ }
+ #endif
+ 
++#ifdef __APPLE__
++// libproc lists every process's sockets (the engine runs as root, so it sees all of them): the owner is
++// the process with a TCP socket from this source to this destination, or a UDP socket bound to this
++// source port. The same socket in two processes (inherited) leaves the owner unknown.
++static bool same_address(const in_sockinfo &info, const sockaddr *address, bool local) {
++    if (address->sa_family == AF_INET) {
++        if ((info.insi_vflag & INI_IPV4) == 0) {
++            return false;
++        }
++        const auto *v4 = reinterpret_cast<const sockaddr_in *>(address); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
++        const in_addr &mine = local ? info.insi_laddr.ina_46.i46a_addr4 : info.insi_faddr.ina_46.i46a_addr4;
++        int port = local ? info.insi_lport : info.insi_fport;
++        return static_cast<uint16_t>(port) == v4->sin_port
++                && (mine.s_addr == v4->sin_addr.s_addr || (local && mine.s_addr == INADDR_ANY));
++    }
++    if ((info.insi_vflag & INI_IPV6) == 0) {
++        return false;
++    }
++    const auto *v6 = reinterpret_cast<const sockaddr_in6 *>(address); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
++    const in6_addr &mine = local ? info.insi_laddr.ina_6 : info.insi_faddr.ina_6;
++    int port = local ? info.insi_lport : info.insi_fport;
++    static constexpr in6_addr ANY = IN6ADDR_ANY_INIT;
++    return static_cast<uint16_t>(port) == v6->sin6_port
++            && (std::memcmp(&mine, &v6->sin6_addr, sizeof(in6_addr)) == 0
++                    || (local && std::memcmp(&mine, &ANY, sizeof(in6_addr)) == 0));
++}
++
++static std::optional<pid_t> connection_owner(const sockaddr *source, const sockaddr *destination, int protocol) {
++    if (source == nullptr || (source->sa_family != AF_INET && source->sa_family != AF_INET6)
++            || (protocol != IPPROTO_TCP && protocol != IPPROTO_UDP)) {
++        return std::nullopt;
++    }
++    bool tcp = protocol == IPPROTO_TCP;
++    if (destination != nullptr && destination->sa_family != source->sa_family) {
++        destination = nullptr;
++    }
++    int bytes = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
++    if (bytes <= 0) {
++        return std::nullopt;
++    }
++    std::vector<pid_t> pids(static_cast<size_t>(bytes) / sizeof(pid_t) + 64);
++    bytes = proc_listpids(PROC_ALL_PIDS, 0, pids.data(), static_cast<int>(pids.size() * sizeof(pid_t)));
++    if (bytes <= 0) {
++        return std::nullopt;
++    }
++    pids.resize(static_cast<size_t>(bytes) / sizeof(pid_t));
++    pid_t self = getpid();
++    std::optional<pid_t> owner;
++    bool ambiguous = false;
++    std::vector<proc_fdinfo> fds;
++    for (pid_t pid : pids) {
++        if (pid <= 0 || pid == self) {
++            continue;
++        }
++        int size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
++        if (size <= 0) {
++            continue;
++        }
++        fds.resize(static_cast<size_t>(size) / sizeof(proc_fdinfo) + 16);
++        size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, fds.data(), static_cast<int>(fds.size() * sizeof(proc_fdinfo)));
++        if (size <= 0) {
++            continue;
++        }
++        size_t count = static_cast<size_t>(size) / sizeof(proc_fdinfo);
++        for (size_t i = 0; i < count; ++i) {
++            if (fds[i].proc_fdtype != PROX_FDTYPE_SOCKET) {
++                continue;
++            }
++            socket_fdinfo info{};
++            if (proc_pidfdinfo(pid, fds[i].proc_fd, PROC_PIDFDSOCKETINFO, &info, sizeof(info)) != sizeof(info)) {
++                continue;
++            }
++            const socket_info &socket = info.psi;
++            if (socket.soi_family != AF_INET && socket.soi_family != AF_INET6) {
++                continue;
++            }
++            bool matches = false;
++            if (tcp && socket.soi_kind == SOCKINFO_TCP) {
++                const in_sockinfo &in = socket.soi_proto.pri_tcp.tcpsi_ini;
++                matches = same_address(in, source, true) && (destination == nullptr || same_address(in, destination, false));
++            } else if (!tcp && socket.soi_kind == SOCKINFO_IN && socket.soi_protocol == IPPROTO_UDP) {
++                matches = same_address(socket.soi_proto.pri_in, source, true);
++            }
++            if (matches) {
++                if (owner && *owner != pid) {
++                    ambiguous = true;
++                }
++                owner = pid;
++            }
++        }
++        if (ambiguous) {
++            return std::nullopt;
++        }
++    }
++    return owner;
++}
++#endif
++
+ std::optional<std::string> application_for_connection(
+         const sockaddr *source, const sockaddr *destination, int protocol) {
+-#ifdef _WIN32
++#ifdef __APPLE__
++    auto pid = connection_owner(source, destination, protocol);
++    if (!pid) {
++        return std::nullopt;
++    }
++    std::string path(PROC_PIDPATHINFO_MAXSIZE, '\0');
++    int length = proc_pidpath(*pid, path.data(), static_cast<uint32_t>(path.size()));
++    if (length <= 0) {
++        return std::nullopt;
++    }
++    path.resize(static_cast<size_t>(length));
++    return path;
++#elif defined(_WIN32)
+     auto pid = connection_owner(source, destination, protocol);
+     if (!pid) {
+         return std::nullopt;
+diff --git a/trusttunnel/src/config.cpp b/trusttunnel/src/config.cpp
+index a4a48d4..0534389 100644
+--- a/trusttunnel/src/config.cpp
++++ b/trusttunnel/src/config.cpp
+@@ -338,7 +338,7 @@ std::optional<TrustTunnelConfig> TrustTunnelConfig::build_config(const toml::tab
+                 result.application_rules.push_back({*process_name, true, connect_action});
+             }
+         }
+-#ifndef _WIN32
++#if !defined(_WIN32) && !defined(__APPLE__)
+         if (!result.application_rules.empty()) {
+             return std::nullopt;
+         }
+diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/test_application_routes.cpp
+index 46ac107..2016607 100644
+--- a/trusttunnel/test/test_application_routes.cpp
++++ b/trusttunnel/test/test_application_routes.cpp
+@@ -8,6 +8,15 @@
+ #include <windows.h>
+ #endif
+ 
++#ifdef __APPLE__
++#include <arpa/inet.h>
++#include <netinet/in.h>
++#include <sys/socket.h>
++#include <signal.h>
++#include <sys/wait.h>
++#include <unistd.h>
++#endif
++
+ using namespace ag;
+ 
+ TEST(SessionPolicy, KeepEstablishedTunnelGuardOnFailureUntilExplicitStop) {
+@@ -17,6 +26,7 @@ TEST(SessionPolicy, KeepEstablishedTunnelGuardOnFailureUntilExplicitStop) {
+     EXPECT_FALSE(retain_kill_switch(true, true, true));
+ }
+ 
++#ifndef __APPLE__
+ TEST(ApplicationRoutes, ValidateFullExecutablePaths) {
+     EXPECT_TRUE(valid_application_path("C:\\Program Files\\Browser\\browser.exe"));
+     EXPECT_TRUE(valid_application_path("D:\\Apps\\BROWSER.EXE"));
+@@ -66,6 +76,108 @@ TEST(ApplicationRoutes, UnknownOwnershipUsesVpnAndKnownNonMatchesKeepDestination
+     EXPECT_EQ(application_route(rules, "D:\\Apps\\direct.exe"), VPN_CA_DEFAULT);
+     EXPECT_FALSE(application_for_connection(nullptr, nullptr, IPPROTO_TCP));
+ }
++#else
++TEST(ApplicationRoutes, ValidateMacPathsAndNames) {
++    EXPECT_TRUE(valid_application_path("/Applications/Jivo.app"));
++    EXPECT_TRUE(valid_application_path("/Applications/Jivo.app/Contents/MacOS/Jivo"));
++    EXPECT_FALSE(valid_application_path("Jivo"));
++    EXPECT_FALSE(valid_application_path("C:\\Apps\\browser.exe"));
++    EXPECT_FALSE(valid_application_path("/Applications/../Jivo.app"));
++    EXPECT_FALSE(valid_application_path("/Applications/Jivo\n.app"));
++    EXPECT_TRUE(valid_process_name("Jivo"));
++    EXPECT_TRUE(valid_process_name("UIS Operator Workplace Helper (GPU)"));
++    EXPECT_TRUE(valid_process_name("communicator_Exolve"));
++    EXPECT_FALSE(valid_process_name(""));
++    EXPECT_FALSE(valid_process_name("app/Jivo"));
++    EXPECT_FALSE(valid_process_name("Jivo\n"));
++    EXPECT_FALSE(valid_process_name(".."));
++}
++
++TEST(ApplicationRoutes, MacNameRulesCoverHelpersAndBundles) {
++    std::vector<ApplicationRule> rules = {{"UIS Operator Workplace", true, VPN_CA_FORCE_REDIRECT},
++            {"/Applications/Direct.app", false, VPN_CA_FORCE_BYPASS}};
++    const std::string uis = "/Applications/UIS Operator Workplace.app/Contents/";
++    EXPECT_EQ(application_route(rules, uis + "MacOS/UIS Operator Workplace"), VPN_CA_FORCE_REDIRECT);
++    EXPECT_EQ(application_route(rules,
++                      uis + "Frameworks/UIS Operator Workplace Helper (GPU).app/Contents/MacOS/UIS Operator Workplace Helper (GPU)"),
++            VPN_CA_FORCE_REDIRECT);
++    EXPECT_EQ(application_route(rules, "/opt/uis/UIS Operator Workplace Helper"), VPN_CA_FORCE_REDIRECT);
++    EXPECT_EQ(application_route(rules, "/opt/uis/uis operator workplace helper (renderer)"), VPN_CA_FORCE_REDIRECT);
++    EXPECT_EQ(application_route(rules, "/opt/uis/UIS Operator Workplace Helperish"), VPN_CA_DEFAULT);
++    EXPECT_EQ(application_route(rules, "/opt/uis/UIS Operator"), VPN_CA_DEFAULT);
++    EXPECT_EQ(application_route(rules, "/Applications/Direct.app/Contents/MacOS/Direct"), VPN_CA_FORCE_BYPASS);
++    EXPECT_EQ(application_route(rules, "/Applications/Direct.app"), VPN_CA_FORCE_BYPASS);
++    EXPECT_EQ(application_route(rules, "/Applications/Direct.appx/Contents/MacOS/Direct"), VPN_CA_DEFAULT);
++    EXPECT_EQ(application_route(rules, "/Applications/Safari.app/Contents/MacOS/Safari"), VPN_CA_DEFAULT);
++    EXPECT_EQ(application_route(rules, std::nullopt), VPN_CA_FORCE_REDIRECT);
++    EXPECT_EQ(application_route({}, std::nullopt), VPN_CA_DEFAULT);
++    EXPECT_FALSE(application_for_connection(nullptr, nullptr, IPPROTO_TCP));
++}
++
++// POSIX socket APIs take sockaddr pointers; the casts are required by the OS.
++// NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
++TEST(ApplicationRoutes, ResolveMacTcpOwnerWithMatchingRemoteEndpoint) {
++    int listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
++    int connection = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
++    ASSERT_GE(listener, 0);
++    ASSERT_GE(connection, 0);
++    sockaddr_in remote{};
++    remote.sin_family = AF_INET;
++    remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    ASSERT_EQ(bind(listener, reinterpret_cast<const sockaddr *>(&remote), sizeof(remote)), 0);
++    ASSERT_EQ(listen(listener, 1), 0);
++    socklen_t length = sizeof(remote);
++    ASSERT_EQ(getsockname(listener, reinterpret_cast<sockaddr *>(&remote), &length), 0);
++    ASSERT_EQ(connect(connection, reinterpret_cast<const sockaddr *>(&remote), sizeof(remote)), 0);
++    sockaddr_in local{};
++    length = sizeof(local);
++    ASSERT_EQ(getsockname(connection, reinterpret_cast<sockaddr *>(&local), &length), 0);
++    auto owner = application_for_connection(
++            reinterpret_cast<const sockaddr *>(&local), reinterpret_cast<const sockaddr *>(&remote), IPPROTO_TCP);
++    sockaddr_in wrong = remote;
++    wrong.sin_port = 0;
++    auto wrong_remote = application_for_connection(
++            reinterpret_cast<const sockaddr *>(&local), reinterpret_cast<const sockaddr *>(&wrong), IPPROTO_TCP);
++    close(connection);
++    close(listener);
++    // The lookup skips the engine's own process, so a test in the same process finds nobody: that is the
++    // point (the engine must never route itself). The child below checks a real owner.
++    EXPECT_FALSE(owner);
++    EXPECT_FALSE(wrong_remote);
++}
++
++TEST(ApplicationRoutes, ResolveMacOwnerOfAnotherProcess) {
++    int pipe_fds[2];
++    ASSERT_EQ(pipe(pipe_fds), 0);
++    pid_t child = fork();
++    ASSERT_GE(child, 0);
++    if (child == 0) {
++        close(pipe_fds[0]);
++        int socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
++        sockaddr_in local{};
++        local.sin_family = AF_INET;
++        local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++        bind(socket, reinterpret_cast<const sockaddr *>(&local), sizeof(local));
++        socklen_t length = sizeof(local);
++        getsockname(socket, reinterpret_cast<sockaddr *>(&local), &length);
++        write(pipe_fds[1], &local, sizeof(local));
++        sleep(10);
++        _exit(0);
++    }
++    close(pipe_fds[1]);
++    sockaddr_in local{};
++    ASSERT_EQ(read(pipe_fds[0], &local, sizeof(local)), static_cast<ssize_t>(sizeof(local)));
++    close(pipe_fds[0]);
++    auto owner = application_for_connection(reinterpret_cast<const sockaddr *>(&local), nullptr, IPPROTO_UDP);
++    auto tcp = application_for_connection(reinterpret_cast<const sockaddr *>(&local), nullptr, IPPROTO_TCP);
++    kill(child, SIGKILL);
++    waitpid(child, nullptr, 0);
++    ASSERT_TRUE(owner);
++    EXPECT_NE(owner->find("test_application_routes"), std::string::npos);
++    EXPECT_FALSE(tcp);
++}
++// NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
++#endif
+ 
+ static const std::string BASE = R"(
+ vpn_mode = "general"
+@@ -108,7 +220,7 @@ TEST(ApplicationRoutes, RejectInvalidConfigRatherThanIgnoringRules) {
+     auto by_name =
+             toml::parse(BASE + "\n[[application_rules]]\nprocess_name = 'UIS Operator Workplace.exe'\naction = 'vpn'");
+     ASSERT_TRUE(by_name);
+-#ifdef _WIN32
++#if defined(_WIN32) || defined(__APPLE__)
+     auto name_config = TrustTunnelConfig::build_config(by_name.table());
+     ASSERT_TRUE(name_config);
+     ASSERT_EQ(name_config->application_rules.size(), 1);

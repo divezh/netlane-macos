@@ -55,16 +55,33 @@ final class ProfileTests: XCTestCase {
         p.dnsServers = ["1.1.1.1", "tls://dns.example"]
         p.routing = Routing(mode: "selective", destinations: ["Example.com", "10.1.0.0/16"], applications: [AppRule(name: "telegram.exe", action: "vpn")])
         let config = try p.engineConfig()
-        XCTAssertTrue(config.hasPrefix("loglevel = \"info\"\nkillswitch_enabled = true\nvpn_mode = \"selective\"\nexclusions = [\"example.com\", \"10.1.0.0/16\"]\n[endpoint]\n"))
+        XCTAssertTrue(config.hasPrefix("loglevel = \"info\"\nkillswitch_enabled = true\nvpn_mode = \"selective\"\nexclusions = ["))
         XCTAssertTrue(config.contains("upstream_protocol = \"http3\"\nanti_dpi = true\ndns_upstreams = [\"1.1.1.1\", \"tls://dns.example\"]\n[listener.tun]\nchange_system_dns = true\nincluded_routes = [\"0.0.0.0/0\", \"2000::/3\"]\n"))
-        XCTAssertFalse(config.contains("application_rules"), "macOS has no application rules")
+        XCTAssertTrue(config.contains("exclusions = [\"example.com\", \"10.1.0.0/16\"]\n[[application_rules]]\nprocess_name = \"telegram\"\naction = \"vpn\"\n[endpoint]\n"))
         XCTAssertFalse(config.contains("device_name"))
         XCTAssertTrue(config.contains("skip_verification = false"))
         let socks = try p.engineConfig(socksPort: 18080)
+        XCTAssertFalse(socks.contains("application_rules"))
         XCTAssertTrue(socks.contains("killswitch_enabled = false") && socks.hasSuffix("[listener.socks]\naddress = \"127.0.0.1:18080\"\n"))
         XCTAssertThrowsError(try p.engineConfig(socksPort: 80))
         let masked = Profile.mask(config)
         XCTAssertFalse(masked.contains("unique-test-secret-123")); XCTAssertTrue(masked.contains("password = \"***\""))
+    }
+    func testMacApplicationRules() throws {
+        // The rule set from the panel: Windows names; on a Mac they become process names.
+        var routing = Routing(mode: "selective", destinations: [], applications: [
+            AppRule(name: "UIS Operator Workplace.exe", action: "vpn"), AppRule(name: "Jivo.EXE", action: "vpn"),
+            AppRule(executable: "C:\\Apps\\direct.exe", action: "direct"), AppRule(name: "exolve-messenger.exe", action: "direct")])
+        try routing.validate()
+        XCTAssertEqual(routing.macApplications.map(\.name), ["UIS Operator Workplace", "Jivo", "exolve-messenger"])
+        XCTAssertEqual(routing.windowsOnlyApplications, 1)
+        XCTAssertEqual(routing.summary, "Через VPN: 3 программы")
+        let rules = try routing.engineConfig().applicationRules
+        XCTAssertEqual(rules, "[[application_rules]]\nprocess_name = \"UIS Operator Workplace\"\naction = \"vpn\"\n[[application_rules]]\nprocess_name = \"Jivo\"\naction = \"vpn\"\n[[application_rules]]\nprocess_name = \"exolve-messenger\"\naction = \"direct\"\n")
+        XCTAssertEqual(try Routing.applicationName(" Jivo "), "Jivo.exe")
+        XCTAssertEqual(try Routing.applicationName("UIS Operator Workplace Helper (GPU)"), "UIS Operator Workplace Helper (GPU).exe")
+        XCTAssertEqual(try Routing.applicationName("Jivo.exe"), "Jivo.exe")
+        for bad in ["", "  ", "/Applications/Jivo.app", "a:b", "a\u{1}"] { XCTAssertThrowsError(try Routing.applicationName(bad), bad) }
     }
     func testTomlQuoteIsNotJson() {
         XCTAssertEqual(Text.tomlQuote("a/b\"c\\d\n\u{1}é"), "\"a/b\\\"c\\\\d\\n\\u0001é\"")

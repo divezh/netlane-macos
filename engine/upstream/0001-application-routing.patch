@@ -1,0 +1,878 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 0409039..96253bb 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -35,6 +35,8 @@ See [README.md](README.md) for full product details and
+ | `net/` | Network layer: HTTP sessions, TLS, QUIC, sockets, OS tunnel, DNS management, pinger |
+ | `tcpip/` | TCP/IP stack: lwIP integration, TCP/UDP/ICMP raw handling, packet pool |
+ | `trusttunnel/` | CLI client app, config parsing; contains Rust sub-crates: `deeplink-ffi/`, `settings/`, `setup_wizard/` |
++| `trusttunnel/src/application_routes.cpp` | Windows process-owner lookup and per-executable routing policy |
++| `trusttunnel/include/vpn/trusttunnel/session_policy.h` | Established kill-switch session retention policy |
+ | `platform/android/` | Android adapter (Kotlin/Gradle) |
+ | `platform/apple/` | Apple adapter (Swift/ObjC, CocoaPods, XCFramework) |
+ | `platform/windows/` | Windows adapter (C++/CMake) |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 8c766f3..c9001ad 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+ 
+ ### Added
+ 
++- Add Windows `application_rules` for per-executable VPN/direct routing with VPN fallback for unknown owners, retain an established kill-switch tunnel until explicit stop after connection loss, and invoke Conan export scripts through Bash on Windows.
++
+ ### Changed
+ 
+ ### Deprecated
+diff --git a/Makefile b/Makefile
+index f7c0ff2..b52294b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -189,20 +189,25 @@ clang-tidy: compile_commands
+ 
+ ## Check c++ code formatting with clangd-tidy.
+ .PHONY: clangd-tidy
++ifeq ($(OS),Windows_NT)
++clangd-tidy:
++	@echo "clangd-tidy skipped on Windows: clangd LSP is unstable here; clang-format and clippy still enforced."
++else
+ clangd-tidy: compile_commands
+ ifeq ($(SKIP_VENV),1)
+-	jq -r '.[] | select(.file | endswith(".cpp")) | .file' $(COMPILE_COMMANDS) \
+-		| grep -vE '(^|/)(third-party)(/|$$)' \
+-		| sort -u \
+-		| xargs clangd-tidy -p $(BUILD_DIR) --tqdm -j$(NPROC)
++	jq -jr '.[] | select(.file | endswith(".cpp")) | .file, "\u0000"' $(COMPILE_COMMANDS) \
++		| grep -zvE '(^|/)(third-party)(/|$$)' \
++		| sort -zu \
++		| xargs -0 clangd-tidy -p $(BUILD_DIR) --tqdm -j$(NPROC)
+ else
+ 	python3 -m venv env && \
+ 	. env/bin/activate && \
+ 	pip install -r requirements.txt && \
+-	jq -r '.[] | select(.file | endswith(".cpp")) | .file' $(COMPILE_COMMANDS) \
+-		| grep -vE '(^|/)(third-party)(/|$$)' \
+-		| sort -u \
+-		| xargs clangd-tidy -p $(BUILD_DIR) --tqdm -j$(NPROC)
++	jq -jr '.[] | select(.file | endswith(".cpp")) | .file, "\u0000"' $(COMPILE_COMMANDS) \
++		| grep -zvE '(^|/)(third-party)(/|$$)' \
++		| sort -zu \
++		| xargs -0 clangd-tidy -p $(BUILD_DIR) --tqdm -j$(NPROC)
++endif
+ endif
+ 
+ ## Lint markdown files.
+diff --git a/core/src/upstream_multiplexer.h b/core/src/upstream_multiplexer.h
+index 780bb6c..631b4f1 100644
+--- a/core/src/upstream_multiplexer.h
++++ b/core/src/upstream_multiplexer.h
+@@ -16,7 +16,9 @@ struct UpstreamInfo;
+ class UpstreamMultiplexer : public ServerUpstream {
+ public:
+     // Maximum number of upstreams
+-    static constexpr size_t DEFAULT_UPSTREAMS_NUM = 8;
++    // Netlane: at most 2 parallel TLS sessions to the endpoint (upstream: 8). Several TLS
++    // connections to one SNI at once is a pattern DPI uses to flag tunnels.
++    static constexpr size_t DEFAULT_UPSTREAMS_NUM = 2;
+     // Number of connection exceeding which a new upstream will be opened
+     static constexpr size_t NEW_UPSTREAM_CONNECTIONS_NUM_THRESHOLD = 5;
+ 
+diff --git a/core/test/test_upstream_multiplexer.cpp b/core/test/test_upstream_multiplexer.cpp
+index eae039d..050d499 100644
+--- a/core/test/test_upstream_multiplexer.cpp
++++ b/core/test/test_upstream_multiplexer.cpp
+@@ -285,7 +285,7 @@ TEST_F(UpstreamMuxTest, LeastLoaded) {
+     }
+     ASSERT_EQ(g_upstreams.size(), UpstreamMultiplexer::DEFAULT_UPSTREAMS_NUM);
+ 
+-    ASSERT_GT(g_upstreams.size(), 2); // otherwise the test makes no sense
++    ASSERT_GE(g_upstreams.size(), 2); // otherwise the test makes no sense (Netlane caps upstreams at 2)
+ 
+     int id_1 = g_upstreams.begin()->first;
+     int id_2 = std::next(g_upstreams.begin())->first;
+diff --git a/rust-toolchain.toml b/rust-toolchain.toml
+index 4933b3b..1bdafd5 100644
+--- a/rust-toolchain.toml
++++ b/rust-toolchain.toml
+@@ -1,2 +1,3 @@
+ [toolchain]
+ channel = "1.95"
++components = ["clippy", "rustfmt"]
+diff --git a/scripts/bootstrap_conan_deps.py b/scripts/bootstrap_conan_deps.py
+index fdb41f4..f492b44 100755
+--- a/scripts/bootstrap_conan_deps.py
++++ b/scripts/bootstrap_conan_deps.py
+@@ -70,6 +70,21 @@ def revision_for_version(version):
+     return "v" + version
+ 
+ 
++def run_export_script(path, cwd=None):
++    command = [path]
++    if os.name == "nt":
++        # Windows' system bash.exe launches WSL, which is unrelated to Git Bash.
++        git_dir = os.path.dirname(shutil.which("git") or "")
++        candidates = [os.path.join(git_dir, "bash.exe"),
++                      os.path.join(git_dir, "..", "bin", "bash.exe"),
++                      os.path.join(git_dir, "..", "usr", "bin", "bash.exe")]
++        bash = next((os.path.abspath(item) for item in candidates if os.path.isfile(item)), None)
++        if bash is None:
++            raise RuntimeError("Git for Windows with Bash is required to export Conan recipes")
++        command = [bash, os.path.abspath(path).replace("\\", "/")]
++    subprocess.run(command, check=True, cwd=cwd)
++
++
+ def export_conan(repo_dir, version):
+     """
+     Check out the revision matching `version` and export the package to the
+@@ -79,8 +94,7 @@ def export_conan(repo_dir, version):
+     """
+     subprocess.run(["git", "-C", repo_dir, "checkout", revision_for_version(version)],
+                    check=True)
+-    subprocess.run([os.path.join(repo_dir, "scripts", "export_conan.sh")],
+-                   check=True, cwd=repo_dir)
++    run_export_script(os.path.join(repo_dir, "scripts", "export_conan.sh"), cwd=repo_dir)
+ 
+ 
+ with open(os.path.join(project_dir, "conanfile.py"), "r") as file:
+@@ -105,7 +119,7 @@ try:
+                     and ('@adguard/oss"' in line):
+                 nlc_versions.append(line.split('@')[0].split('/')[1])
+ 
+-    subprocess.run([os.path.join("scripts", "export_conan.sh")], check=True)
++    run_export_script(os.path.join("scripts", "export_conan.sh"))
+ finally:
+     remove_dir_if_exists(dns_libs_dir)
+ 
+diff --git a/trusttunnel/CMakeLists.txt b/trusttunnel/CMakeLists.txt
+index a2f81c4..972390b 100644
+--- a/trusttunnel/CMakeLists.txt
++++ b/trusttunnel/CMakeLists.txt
+@@ -23,6 +23,7 @@ if (MSVC)
+ endif (MSVC)
+ 
+ set(SOURCE_FILES
++        src/application_routes.cpp
+         src/config.cpp
+         src/client.cpp
+         src/utils.cpp
+@@ -42,6 +43,9 @@ find_package(tomlplusplus REQUIRED)
+ find_package(nlohmann_json REQUIRED)
+ 
+ target_link_libraries(vpnlibs_trusttunnel vpnlibs_core cxxopts::cxxopts)
++if (WIN32)
++    target_link_libraries(vpnlibs_trusttunnel iphlpapi)
++endif ()
+ target_link_libraries(vpnlibs_trusttunnel magic_enum::magic_enum)
+ target_link_libraries(vpnlibs_trusttunnel tomlplusplus::tomlplusplus)
+ target_link_libraries(vpnlibs_trusttunnel nlohmann_json::nlohmann_json)
+@@ -310,3 +314,4 @@ include(${VPN_LIB_DIR}/cmake/add_unit_test.cmake)
+ set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/test)
+ 
+ add_unit_test(test_persistent_ring_buffer "${TEST_DIR}" "" TRUE TRUE)
++add_unit_test(test_application_routes "${TEST_DIR}" "" TRUE TRUE)
+diff --git a/trusttunnel/include/vpn/trusttunnel/application_routes.h b/trusttunnel/include/vpn/trusttunnel/application_routes.h
+new file mode 100644
+index 0000000..ed454cd
+--- /dev/null
++++ b/trusttunnel/include/vpn/trusttunnel/application_routes.h
+@@ -0,0 +1,27 @@
++#pragma once
++
++#include <optional>
++#include <string>
++#include <string_view>
++#include <vector>
++
++#include "vpn/vpn.h"
++
++namespace ag {
++
++struct ApplicationRule {
++    std::string executable;
++    // True when `executable` holds a bare image name (Clash PROCESS-NAME semantics) instead of a full path.
++    bool by_name = false;
++    VpnConnectAction action = VPN_CA_FORCE_REDIRECT;
++};
++
++bool valid_application_path(std::string_view path);
++bool valid_process_name(std::string_view name);
++bool application_paths_equal(std::string_view first, std::string_view second);
++bool application_names_equal(std::string_view first, std::string_view second);
++VpnConnectAction application_route(const std::vector<ApplicationRule> &rules, const std::optional<std::string> &owner);
++std::optional<std::string> application_for_connection(
++        const sockaddr *source, const sockaddr *destination, int protocol);
++
++} // namespace ag
+diff --git a/trusttunnel/include/vpn/trusttunnel/client.h b/trusttunnel/include/vpn/trusttunnel/client.h
+index 9306dd6..4a9ee04 100644
+--- a/trusttunnel/include/vpn/trusttunnel/client.h
++++ b/trusttunnel/include/vpn/trusttunnel/client.h
+@@ -104,6 +104,7 @@ private:
+     const ag::Logger m_logger{"TRUSTTUNNEL_CLIENT"};
+     std::atomic<Vpn *> m_vpn = nullptr;
+     TrustTunnelConfig m_config;
++    std::shared_ptr<const std::vector<ApplicationRule>> m_application_rules;
+     std::thread m_loop_thread;
+     DeclPtr<VpnEventLoop, &vpn_event_loop_destroy> m_extra_loop = nullptr;
+     std::unique_ptr<ag::VpnOsTunnel> m_tunnel = nullptr;
+diff --git a/trusttunnel/include/vpn/trusttunnel/config.h b/trusttunnel/include/vpn/trusttunnel/config.h
+index 4e3a9ce..7fdc46a 100644
+--- a/trusttunnel/include/vpn/trusttunnel/config.h
++++ b/trusttunnel/include/vpn/trusttunnel/config.h
+@@ -8,6 +8,7 @@
+ 
+ #include <toml++/toml.h>
+ 
++#include "vpn/trusttunnel/application_routes.h"
+ #include "vpn/utils.h"
+ #include "vpn/vpn.h"
+ 
+@@ -66,6 +67,7 @@ struct TrustTunnelConfig {
+     std::string exclusions_scannable_ports;         // Empty = use default list
+     std::string log_file_path;
+     std::string exclusions;
++    std::vector<ApplicationRule> application_rules;
+     std::optional<std::string> ssl_session_storage_path;
+     std::vector<std::string> legacy_dns_upstreams;
+     Location location;
+diff --git a/trusttunnel/include/vpn/trusttunnel/session_policy.h b/trusttunnel/include/vpn/trusttunnel/session_policy.h
+new file mode 100644
+index 0000000..76f8ea4
+--- /dev/null
++++ b/trusttunnel/include/vpn/trusttunnel/session_policy.h
+@@ -0,0 +1,9 @@
++#pragma once
++
++namespace ag {
++
++inline bool retain_kill_switch(bool enabled, bool connected_once, bool explicit_stop) {
++    return enabled && connected_once && !explicit_stop;
++}
++
++} // namespace ag
+diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/application_routes.cpp
+new file mode 100644
+index 0000000..244a6e6
+--- /dev/null
++++ b/trusttunnel/src/application_routes.cpp
+@@ -0,0 +1,255 @@
++#include "vpn/trusttunnel/application_routes.h"
++
++#include <algorithm>
++#include <cctype>
++#include <cstring>
++
++#ifdef _WIN32
++#include <iphlpapi.h>
++#include <windows.h>
++#endif
++
++namespace ag {
++
++static std::string normalized_path(std::string_view path) {
++    if (path.starts_with("\\\\?\\")) {
++        path.remove_prefix(4);
++    }
++    std::string result(path);
++    std::ranges::replace(result, '/', '\\');
++    return result;
++}
++
++bool valid_application_path(std::string_view path) {
++    if (path.size() < 8 || path.size() > 4096 || !std::isalpha(static_cast<unsigned char>(path[0])) || path[1] != ':'
++            || path[2] != '\\' || path.find("\\..\\") != std::string_view::npos
++            || path.find_first_of("\r\n\"<>|?*") != std::string_view::npos
++            || path.find('\0') != std::string_view::npos) {
++        return false;
++    }
++    std::string suffix(path.substr(path.size() - 4));
++    std::ranges::transform(suffix, suffix.begin(), [](unsigned char c) {
++        return static_cast<char>(std::tolower(c));
++    });
++    return suffix == ".exe";
++}
++
++bool valid_process_name(std::string_view name) {
++    if (name.size() < 5 || name.size() > 255 || name.find_first_of("\\/:*?\"<>|\r\n") != std::string_view::npos
++            || name.find('\0') != std::string_view::npos) {
++        return false;
++    }
++    std::string suffix(name.substr(name.size() - 4));
++    std::ranges::transform(suffix, suffix.begin(), [](unsigned char c) {
++        return static_cast<char>(std::tolower(c));
++    });
++    return suffix == ".exe";
++}
++
++static std::string_view file_name(std::string_view path) {
++    size_t slash = path.find_last_of("\\/");
++    return slash == std::string_view::npos ? path : path.substr(slash + 1);
++}
++
++#ifdef _WIN32
++static std::optional<std::wstring> utf16(std::string_view text) {
++    int size =
++            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
++    if (size <= 0) {
++        return std::nullopt;
++    }
++    std::wstring result(size, L'\0');
++    if (MultiByteToWideChar(
++                CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), size)
++            != size) {
++        return std::nullopt;
++    }
++    return result;
++}
++#endif
++
++bool application_paths_equal(std::string_view first, std::string_view second) {
++    std::string a = normalized_path(first);
++    std::string b = normalized_path(second);
++#ifdef _WIN32
++    auto wide_a = utf16(a);
++    auto wide_b = utf16(b);
++    return wide_a && wide_b
++            && CompareStringOrdinal(wide_a->data(), static_cast<int>(wide_a->size()), wide_b->data(),
++                       static_cast<int>(wide_b->size()), TRUE)
++            == CSTR_EQUAL;
++#else
++    return std::ranges::equal(a, b, [](unsigned char x, unsigned char y) {
++        return std::tolower(x) == std::tolower(y);
++    });
++#endif
++}
++
++bool application_names_equal(std::string_view first, std::string_view second) {
++#ifdef _WIN32
++    auto wide_a = utf16(first);
++    auto wide_b = utf16(second);
++    return wide_a && wide_b
++            && CompareStringOrdinal(wide_a->data(), static_cast<int>(wide_a->size()), wide_b->data(),
++                       static_cast<int>(wide_b->size()), TRUE)
++            == CSTR_EQUAL;
++#else
++    return std::ranges::equal(first, second, [](unsigned char x, unsigned char y) {
++        return std::tolower(x) == std::tolower(y);
++    });
++#endif
++}
++
++VpnConnectAction application_route(const std::vector<ApplicationRule> &rules, const std::optional<std::string> &owner) {
++    if (rules.empty()) {
++        return VPN_CA_DEFAULT;
++    }
++    if (!owner) {
++        return VPN_CA_FORCE_REDIRECT;
++    }
++    for (const auto &rule : rules) {
++        bool matches = rule.by_name ? application_names_equal(rule.executable, file_name(*owner))
++                                    : application_paths_equal(rule.executable, *owner);
++        if (matches) {
++            return rule.action;
++        }
++    }
++    return VPN_CA_DEFAULT;
++}
++
++#ifdef _WIN32
++static std::optional<DWORD> connection_owner(const sockaddr *source, const sockaddr *destination, int protocol) {
++    if (source == nullptr || (source->sa_family != AF_INET && source->sa_family != AF_INET6)) {
++        return std::nullopt;
++    }
++    DWORD size = 0;
++    bool tcp = protocol == IPPROTO_TCP;
++    if (!tcp && protocol != IPPROTO_UDP) {
++        return std::nullopt;
++    }
++    auto read = [&](void *data) {
++        return tcp ? GetExtendedTcpTable(data, &size, FALSE, source->sa_family, TCP_TABLE_OWNER_PID_ALL, 0)
++                   : GetExtendedUdpTable(data, &size, FALSE, source->sa_family, UDP_TABLE_OWNER_PID, 0);
++    };
++    if (read(nullptr) != ERROR_INSUFFICIENT_BUFFER || size > 16 * 1024 * 1024) {
++        return std::nullopt;
++    }
++    std::vector<unsigned char> buffer;
++    DWORD status = ERROR_INSUFFICIENT_BUFFER;
++    for (int attempt = 0; attempt < 3 && status == ERROR_INSUFFICIENT_BUFFER; ++attempt) {
++        if (size > 16 * 1024 * 1024) {
++            return std::nullopt;
++        }
++        buffer.resize(size);
++        status = read(buffer.data());
++    }
++    if (status != NO_ERROR) {
++        return std::nullopt;
++    }
++    std::optional<DWORD> owner;
++    bool ambiguous = false;
++    auto observe = [&](DWORD pid) {
++        if (pid == 0 || (owner && *owner != pid)) {
++            ambiguous = true;
++        } else {
++            owner = pid;
++        }
++    };
++    if (source->sa_family == AF_INET) {
++        const auto *src = reinterpret_cast<const sockaddr_in *>(source);
++        const auto *dst = destination && destination->sa_family == AF_INET
++                ? reinterpret_cast<const sockaddr_in *>(destination)
++                : nullptr;
++        if (tcp) {
++            const auto *table = reinterpret_cast<const MIB_TCPTABLE_OWNER_PID *>(buffer.data());
++            for (DWORD i = 0; i < table->dwNumEntries; ++i) {
++                const auto &row = table->table[i];
++                if (row.dwState != MIB_TCP_STATE_LISTEN && row.dwLocalPort == src->sin_port
++                        && row.dwLocalAddr == src->sin_addr.s_addr
++                        && (!dst || (row.dwRemotePort == dst->sin_port && row.dwRemoteAddr == dst->sin_addr.s_addr))) {
++                    observe(row.dwOwningPid);
++                }
++            }
++        } else {
++            const auto *table = reinterpret_cast<const MIB_UDPTABLE_OWNER_PID *>(buffer.data());
++            for (DWORD i = 0; i < table->dwNumEntries; ++i) {
++                const auto &row = table->table[i];
++                if (row.dwLocalPort == src->sin_port
++                        && (row.dwLocalAddr == 0 || row.dwLocalAddr == src->sin_addr.s_addr)) {
++                    observe(row.dwOwningPid);
++                }
++            }
++        }
++    } else {
++        const auto *src = reinterpret_cast<const sockaddr_in6 *>(source);
++        const auto *dst = destination && destination->sa_family == AF_INET6
++                ? reinterpret_cast<const sockaddr_in6 *>(destination)
++                : nullptr;
++        if (tcp) {
++            const auto *table = reinterpret_cast<const MIB_TCP6TABLE_OWNER_PID *>(buffer.data());
++            for (DWORD i = 0; i < table->dwNumEntries; ++i) {
++                const auto &row = table->table[i];
++                if (row.dwState != MIB_TCP_STATE_LISTEN && row.dwLocalPort == src->sin6_port
++                        && std::memcmp(row.ucLocalAddr, &src->sin6_addr, 16) == 0
++                        && (!dst
++                                || (row.dwRemotePort == dst->sin6_port
++                                        && std::memcmp(row.ucRemoteAddr, &dst->sin6_addr, 16) == 0))) {
++                    observe(row.dwOwningPid);
++                }
++            }
++        } else {
++            const auto *table = reinterpret_cast<const MIB_UDP6TABLE_OWNER_PID *>(buffer.data());
++            static constexpr unsigned char ANY[16] = {};
++            for (DWORD i = 0; i < table->dwNumEntries; ++i) {
++                const auto &row = table->table[i];
++                if (row.dwLocalPort == src->sin6_port
++                        && (std::memcmp(row.ucLocalAddr, ANY, 16) == 0
++                                || std::memcmp(row.ucLocalAddr, &src->sin6_addr, 16) == 0)) {
++                    observe(row.dwOwningPid);
++                }
++            }
++        }
++    }
++    return ambiguous ? std::nullopt : owner;
++}
++#endif
++
++std::optional<std::string> application_for_connection(
++        const sockaddr *source, const sockaddr *destination, int protocol) {
++#ifdef _WIN32
++    auto pid = connection_owner(source, destination, protocol);
++    if (!pid) {
++        return std::nullopt;
++    }
++    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, *pid);
++    if (process == nullptr) {
++        return std::nullopt;
++    }
++    std::wstring path(32768, L'\0');
++    DWORD length = static_cast<DWORD>(path.size());
++    BOOL success = QueryFullProcessImageNameW(process, 0, path.data(), &length);
++    CloseHandle(process);
++    if (!success) {
++        return std::nullopt;
++    }
++    int size = WideCharToMultiByte(
++            CP_UTF8, WC_ERR_INVALID_CHARS, path.data(), static_cast<int>(length), nullptr, 0, nullptr, nullptr);
++    if (size <= 0) {
++        return std::nullopt;
++    }
++    std::string result(size, '\0');
++    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path.data(), static_cast<int>(length), result.data(), size,
++                nullptr, nullptr)
++            != size) {
++        return std::nullopt;
++    }
++    return normalized_path(result);
++#else
++    (void) source;
++    (void) destination;
++    (void) protocol;
++    return std::nullopt;
++#endif
++}
++
++} // namespace ag
+diff --git a/trusttunnel/src/client.cpp b/trusttunnel/src/client.cpp
+index cdb7649..6da03e4 100644
+--- a/trusttunnel/src/client.cpp
++++ b/trusttunnel/src/client.cpp
+@@ -21,6 +21,7 @@ TrustTunnelClient::TrustTunnelClient(TrustTunnelConfig &&config, VpnCallbacks &&
+         : m_config(std::move(config))
+         , m_extra_loop(vpn_event_loop_create())
+         , m_callbacks(std::move(callbacks)) {
++    m_application_rules = std::make_shared<const std::vector<ApplicationRule>>(m_config.application_rules);
+     if (!m_config.log_file_path.empty()) {
+         m_logfile_handler.emplace(m_config.log_file_path);
+         m_logtofile.emplace(m_logfile_handler->get_file());
+@@ -504,6 +505,10 @@ void TrustTunnelClient::vpn_handler(void *, VpnEvent what, void *data) {
+         struct TaskContext {
+             VpnConnectionInfo *info;
+             Vpn *vpn;
++            std::shared_ptr<const std::vector<ApplicationRule>> rules;
++            SocketAddress source;
++            SocketAddress destination;
++            int protocol;
+         };
+         auto *task_context = new TaskContext;
+         const VpnConnectRequestEvent *event = (VpnConnectRequestEvent *) data;
+@@ -512,6 +517,15 @@ void TrustTunnelClient::vpn_handler(void *, VpnEvent what, void *data) {
+         info->appname = safe_to_string_view(event->app_name).empty() ? "trusttunnel_client" : event->app_name;
+         task_context->info = info;
+         task_context->vpn = m_vpn;
++        task_context->rules = m_application_rules;
++        if (event->src != nullptr) {
++            task_context->source = SocketAddress(event->src);
++        }
++        if (event->dst != nullptr && event->dst->type == VPN_AT_ADDR
++                && std::holds_alternative<TrustTunnelConfig::TunListener>(m_config.listener)) {
++            task_context->destination = SocketAddress(event->dst->addr);
++        }
++        task_context->protocol = event->proto;
+         vpn_event_loop_submit(m_extra_loop.get(),
+                 {
+                         .arg = (void *) task_context,
+@@ -520,6 +534,11 @@ void TrustTunnelClient::vpn_handler(void *, VpnEvent what, void *data) {
+                                     auto *context = (TaskContext *) arg;
+                                     auto *info = context->info;
+                                     if (context->vpn) {
++                                        if (!context->rules->empty()) {
++                                            info->action = application_route(*context->rules,
++                                                    application_for_connection(context->source.c_sockaddr(),
++                                                            context->destination.c_sockaddr(), context->protocol));
++                                        }
+                                         vpn_complete_connect_request(context->vpn, info);
+                                     }
+                                 },
+diff --git a/trusttunnel/src/config.cpp b/trusttunnel/src/config.cpp
+index 4005d44..a4a48d4 100644
+--- a/trusttunnel/src/config.cpp
++++ b/trusttunnel/src/config.cpp
+@@ -1,3 +1,4 @@
++#include <algorithm>
+ #include <common/logger.h>
+ #include <cstdio>
+ #include <functional>
+@@ -301,6 +302,49 @@ std::optional<TrustTunnelConfig> TrustTunnelConfig::build_config(const toml::tab
+ 
+     result.ssl_session_storage_path = config["ssl_session_cache_path"].value<std::string_view>();
+ 
++    if (config.contains("application_rules")) {
++        const auto *rules = config["application_rules"].as_array();
++        if (rules == nullptr || rules->size() > 100) {
++            return std::nullopt;
++        }
++        for (const auto &entry : *rules) {
++            const auto *rule = entry.as_table();
++            if (rule == nullptr || rule->size() != 2) {
++                return std::nullopt;
++            }
++            auto executable = (*rule)["executable"].value<std::string>();
++            auto process_name = (*rule)["process_name"].value<std::string>();
++            auto action = (*rule)["action"].value<std::string>();
++            if (executable.has_value() == process_name.has_value() || !action
++                    || (*action != "vpn" && *action != "direct")) {
++                return std::nullopt;
++            }
++            VpnConnectAction connect_action = *action == "vpn" ? VPN_CA_FORCE_REDIRECT : VPN_CA_FORCE_BYPASS;
++            if (executable) {
++                bool duplicate = std::ranges::any_of(result.application_rules, [&](const auto &old) {
++                    return !old.by_name && application_paths_equal(old.executable, *executable);
++                });
++                if (!valid_application_path(*executable) || duplicate) {
++                    return std::nullopt;
++                }
++                result.application_rules.push_back({*executable, false, connect_action});
++            } else {
++                bool duplicate = std::ranges::any_of(result.application_rules, [&](const auto &old) {
++                    return old.by_name && application_names_equal(old.executable, *process_name);
++                });
++                if (!valid_process_name(*process_name) || duplicate) {
++                    return std::nullopt;
++                }
++                result.application_rules.push_back({*process_name, true, connect_action});
++            }
++        }
++#ifndef _WIN32
++        if (!result.application_rules.empty()) {
++            return std::nullopt;
++        }
++#endif
++    }
++
+     if (const auto *x = config["exclusions"].as_array(); x != nullptr) {
+         for (const auto &e : *x) {
+             if (std::optional ex = e.value<std::string_view>(); ex.has_value() && !ex->empty()) {
+diff --git a/trusttunnel/src/trusttunnel_client.cpp b/trusttunnel/src/trusttunnel_client.cpp
+index 52aa226..7673855 100644
+--- a/trusttunnel/src/trusttunnel_client.cpp
++++ b/trusttunnel/src/trusttunnel_client.cpp
+@@ -22,6 +22,7 @@
+ #include "vpn/trusttunnel/auto_network_monitor.h"
+ #include "vpn/trusttunnel/client.h"
+ #include "vpn/trusttunnel/config.h"
++#include "vpn/trusttunnel/session_policy.h"
+ #include "vpn/trusttunnel/version.h"
+ 
+ #ifdef __APPLE__
+@@ -48,7 +49,7 @@ static std::weak_ptr<TrustTunnelClient> g_client;
+ 
+ static std::function<void(SocketProtectEvent *)> get_protect_socket_callback(const TrustTunnelConfig &config);
+ static std::function<void(VpnVerifyCertificateEvent *)> get_verify_certificate_callback();
+-static std::function<void(VpnStateChangedEvent *)> get_state_changed_callback();
++static std::function<void(VpnStateChangedEvent *)> get_state_changed_callback(bool keep_tunnel);
+ static std::function<void(VpnConnectionInfoEvent *)> get_connection_info_callback();
+ 
+ #ifdef _WIN32
+@@ -185,7 +186,8 @@ int run_client(const cxxopts::ParseResult &cli_args) {
+     VpnCallbacks callbacks = {
+             .protect_handler = get_protect_socket_callback(config),
+             .verify_handler = get_verify_certificate_callback(),
+-            .state_changed_handler = get_state_changed_callback(),
++            .state_changed_handler = get_state_changed_callback(config.killswitch_enabled
++                    && std::holds_alternative<TrustTunnelConfig::TunListener>(config.listener)),
+             .connection_info_handler = get_connection_info_callback(),
+     };
+ 
+@@ -315,13 +317,17 @@ static std::function<void(VpnVerifyCertificateEvent *)> get_verify_certificate_c
+     };
+ }
+ 
+-static std::function<void(VpnStateChangedEvent *)> get_state_changed_callback() {
+-    return [](VpnStateChangedEvent *event) {
++static std::function<void(VpnStateChangedEvent *)> get_state_changed_callback(bool keep_tunnel) {
++    return [keep_tunnel, connected_once = std::make_shared<std::atomic<bool>>(false)](VpnStateChangedEvent *event) {
+         switch (event->state) {
+         case VPN_SS_DISCONNECTED:
+             if (event->error.code != 0) {
+                 errlog(g_logger, "Error: {} {}", event->error.code, safe_to_string_view(event->error.text));
+             }
++            if (ag::retain_kill_switch(keep_tunnel, connected_once->load(), !keep_running.load())) {
++                infolog(g_logger, "Kill switch active; awaiting explicit stop");
++                return;
++            }
+             stop_trusttunnel_client();
+             break;
+         case VPN_SS_WAITING_RECOVERY:
+@@ -330,6 +336,7 @@ static std::function<void(VpnStateChangedEvent *)> get_state_changed_callback()
+                     safe_to_string_view(event->waiting_recovery_info.error.text));
+             break;
+         case VPN_SS_CONNECTED: {
++            connected_once->store(true);
+             infolog(g_logger, "Successfully connected to endpoint");
+             break;
+         }
+diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/test_application_routes.cpp
+new file mode 100644
+index 0000000..46ac107
+--- /dev/null
++++ b/trusttunnel/test/test_application_routes.cpp
+@@ -0,0 +1,190 @@
++#include <gtest/gtest.h>
++
++#include "vpn/trusttunnel/application_routes.h"
++#include "vpn/trusttunnel/config.h"
++#include "vpn/trusttunnel/session_policy.h"
++
++#ifdef _WIN32
++#include <windows.h>
++#endif
++
++using namespace ag;
++
++TEST(SessionPolicy, KeepEstablishedTunnelGuardOnFailureUntilExplicitStop) {
++    EXPECT_TRUE(retain_kill_switch(true, true, false));
++    EXPECT_FALSE(retain_kill_switch(false, true, false));
++    EXPECT_FALSE(retain_kill_switch(true, false, false));
++    EXPECT_FALSE(retain_kill_switch(true, true, true));
++}
++
++TEST(ApplicationRoutes, ValidateFullExecutablePaths) {
++    EXPECT_TRUE(valid_application_path("C:\\Program Files\\Browser\\browser.exe"));
++    EXPECT_TRUE(valid_application_path("D:\\Apps\\BROWSER.EXE"));
++    EXPECT_FALSE(valid_application_path("browser.exe"));
++    EXPECT_FALSE(valid_application_path("\\\\server\\share\\browser.exe"));
++    EXPECT_FALSE(valid_application_path("C:\\Apps\\*\\browser.exe"));
++    EXPECT_FALSE(valid_application_path("C:\\Apps\\..\\browser.exe"));
++    EXPECT_FALSE(valid_application_path("C:\\Apps\\browser.exe\n"));
++    EXPECT_FALSE(valid_application_path("C:\\Apps\\browser.lnk"));
++    EXPECT_FALSE(valid_application_path(std::string("C:\\Apps\\browser.exe\0injected", 28)));
++}
++
++TEST(ApplicationRoutes, MatchFullPathsWithoutCaseOrSlashAmbiguity) {
++    EXPECT_TRUE(application_paths_equal("C:\\Apps\\Browser.EXE", "c:/apps/browser.exe"));
++    EXPECT_TRUE(application_paths_equal("C:\\Apps\\browser.exe", "\\\\?\\C:\\Apps\\browser.exe"));
++    EXPECT_FALSE(application_paths_equal("C:\\Apps\\browser.exe", "D:\\Apps\\browser.exe"));
++    EXPECT_FALSE(application_paths_equal("C:\\Apps\\browser.exe", "C:\\Other\\browser.exe"));
++#ifdef _WIN32
++    EXPECT_TRUE(application_paths_equal("C:\\\xC3\x84pp\\browser.exe", "c:\\\xC3\xA4pp\\browser.exe"));
++#endif
++}
++
++TEST(ApplicationRoutes, MatchByProcessName) {
++    EXPECT_TRUE(valid_process_name("UIS Operator Workplace.exe"));
++    EXPECT_TRUE(valid_process_name("Browser.EXE"));
++    EXPECT_FALSE(valid_process_name("browser"));
++    EXPECT_FALSE(valid_process_name("C:\\Apps\\browser.exe"));
++    EXPECT_FALSE(valid_process_name("app/browser.exe"));
++    EXPECT_FALSE(valid_process_name("a\"b.exe"));
++    EXPECT_TRUE(application_names_equal("UIS Operator WORKPLACE.EXE", "uis operator workplace.exe"));
++    EXPECT_FALSE(application_names_equal("A.exe", "B.exe"));
++    std::vector<ApplicationRule> rules = {{"UIS Operator Workplace.exe", true, VPN_CA_FORCE_REDIRECT},
++            {"D:\\Apps\\direct.exe", false, VPN_CA_FORCE_BYPASS}};
++    EXPECT_EQ(application_route(rules, "c:\\Program Files\\UIS\\uis operator workplace.exe"), VPN_CA_FORCE_REDIRECT);
++    EXPECT_EQ(application_route(rules, "C:\\Deep\\D\\Apps\\direct.exe"), VPN_CA_DEFAULT);
++    EXPECT_EQ(application_route(rules, "C:\\Apps\\other.exe"), VPN_CA_DEFAULT);
++}
++
++TEST(ApplicationRoutes, UnknownOwnershipUsesVpnAndKnownNonMatchesKeepDestinationPolicy) {
++    std::vector<ApplicationRule> rules = {
++            {"C:\\Apps\\direct.exe", false, VPN_CA_FORCE_BYPASS}, {"C:\\Apps\\vpn.exe", false, VPN_CA_FORCE_REDIRECT}};
++    EXPECT_EQ(application_route({}, std::nullopt), VPN_CA_DEFAULT);
++    EXPECT_EQ(application_route(rules, std::nullopt), VPN_CA_FORCE_REDIRECT);
++    EXPECT_EQ(application_route(rules, "c:\\apps\\DIRECT.exe"), VPN_CA_FORCE_BYPASS);
++    EXPECT_EQ(application_route(rules, "C:\\Apps\\vpn.exe"), VPN_CA_FORCE_REDIRECT);
++    EXPECT_EQ(application_route(rules, "C:\\Apps\\other.exe"), VPN_CA_DEFAULT);
++    EXPECT_EQ(application_route(rules, "D:\\Apps\\direct.exe"), VPN_CA_DEFAULT);
++    EXPECT_FALSE(application_for_connection(nullptr, nullptr, IPPROTO_TCP));
++}
++
++static const std::string BASE = R"(
++vpn_mode = "general"
++[endpoint]
++hostname = "vpn.example.com"
++addresses = ["127.0.0.1:443"]
++username = "test-user"
++password = "test-password-123"
++skip_verification = false
++has_ipv6 = false
++upstream_protocol = "http2"
++[listener.socks]
++address = "127.0.0.1:1080"
++)";
++
++TEST(ApplicationRoutes, RejectInvalidConfigRatherThanIgnoringRules) {
++    for (const auto &rule : {"executable = 'browser.exe'\naction = 'direct'",
++                 "executable = 'C:\\Apps\\browser.exe'\naction = 'unknown'",
++                 "executable = 'C:\\Apps\\browser.exe'\naction = 'vpn'\nextra = true"}) {
++        auto parsed = toml::parse(BASE + "\n[[application_rules]]\n" + rule);
++        ASSERT_TRUE(parsed);
++        EXPECT_FALSE(TrustTunnelConfig::build_config(parsed.table()));
++    }
++    auto duplicate = toml::parse(BASE
++            + "\n[[application_rules]]\nexecutable = 'C:\\Apps\\browser.exe'\naction = 'direct'"
++              "\n[[application_rules]]\nexecutable = 'c:\\apps\\BROWSER.exe'\naction = 'vpn'");
++    ASSERT_TRUE(duplicate);
++    EXPECT_FALSE(TrustTunnelConfig::build_config(duplicate.table()));
++    auto valid = toml::parse(BASE + "\n[[application_rules]]\nexecutable = 'C:\\Apps\\browser.exe'\naction = 'direct'");
++    ASSERT_TRUE(valid);
++#ifdef _WIN32
++    auto config = TrustTunnelConfig::build_config(valid.table());
++    ASSERT_TRUE(config);
++    ASSERT_EQ(config->application_rules.size(), 1);
++    EXPECT_EQ(config->application_rules[0].action, VPN_CA_FORCE_BYPASS);
++#else
++    EXPECT_FALSE(TrustTunnelConfig::build_config(valid.table()));
++#endif
++
++    auto by_name =
++            toml::parse(BASE + "\n[[application_rules]]\nprocess_name = 'UIS Operator Workplace.exe'\naction = 'vpn'");
++    ASSERT_TRUE(by_name);
++#ifdef _WIN32
++    auto name_config = TrustTunnelConfig::build_config(by_name.table());
++    ASSERT_TRUE(name_config);
++    ASSERT_EQ(name_config->application_rules.size(), 1);
++    EXPECT_TRUE(name_config->application_rules[0].by_name);
++    EXPECT_EQ(name_config->application_rules[0].executable, "UIS Operator Workplace.exe");
++    EXPECT_EQ(name_config->application_rules[0].action, VPN_CA_FORCE_REDIRECT);
++#else
++    EXPECT_FALSE(TrustTunnelConfig::build_config(by_name.table()));
++#endif
++    auto mixed_both = toml::parse(BASE
++            + "\n[[application_rules]]\nexecutable = 'C:\\Apps\\browser.exe'"
++              "\nprocess_name = 'Browser.exe'\naction = 'direct'");
++    ASSERT_TRUE(mixed_both);
++    EXPECT_FALSE(TrustTunnelConfig::build_config(mixed_both.table()));
++    auto dup_name = toml::parse(BASE
++            + "\n[[application_rules]]\nprocess_name = 'browser.EXE'\naction = 'direct'"
++              "\n[[application_rules]]\nprocess_name = 'Browser.exe'\naction = 'vpn'");
++    ASSERT_TRUE(dup_name);
++    EXPECT_FALSE(TrustTunnelConfig::build_config(dup_name.table()));
++}
++
++#ifdef _WIN32
++// WinSock APIs accept sockaddr pointers; the casts are required by the OS, not a design flaw.
++// NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
++TEST(ApplicationRoutes, ResolveTcpOwnerWithMatchingRemoteEndpoint) {
++    WSADATA wsa{};
++    ASSERT_EQ(WSAStartup(MAKEWORD(2, 2), &wsa), 0);
++    SOCKET listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
++    SOCKET connection = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
++    ASSERT_NE(listener, INVALID_SOCKET);
++    ASSERT_NE(connection, INVALID_SOCKET);
++    sockaddr_in remote{};
++    remote.sin_family = AF_INET;
++    remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    ASSERT_EQ(bind(listener, reinterpret_cast<const sockaddr *>(&remote), sizeof(remote)), 0);
++    ASSERT_EQ(listen(listener, 1), 0);
++    int length = sizeof(remote);
++    ASSERT_EQ(getsockname(listener, reinterpret_cast<sockaddr *>(&remote), &length), 0);
++    ASSERT_EQ(connect(connection, reinterpret_cast<const sockaddr *>(&remote), sizeof(remote)), 0);
++    sockaddr_in local{};
++    length = sizeof(local);
++    ASSERT_EQ(getsockname(connection, reinterpret_cast<sockaddr *>(&local), &length), 0);
++    auto owner = application_for_connection(
++            reinterpret_cast<const sockaddr *>(&local), reinterpret_cast<const sockaddr *>(&remote), IPPROTO_TCP);
++    remote.sin_port = 0;
++    auto wrong_remote = application_for_connection(
++            reinterpret_cast<const sockaddr *>(&local), reinterpret_cast<const sockaddr *>(&remote), IPPROTO_TCP);
++    closesocket(connection);
++    closesocket(listener);
++    WSACleanup();
++    ASSERT_TRUE(owner);
++    EXPECT_NE(owner->find("test_application_routes"), std::string::npos);
++    EXPECT_FALSE(wrong_remote);
++}
++
++TEST(ApplicationRoutes, ResolveRealUdpOwnerWithoutChangingSystemRouting) {
++    WSADATA wsa{};
++    ASSERT_EQ(WSAStartup(MAKEWORD(2, 2), &wsa), 0);
++    SOCKET socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
++    ASSERT_NE(socket, INVALID_SOCKET);
++    sockaddr_in local{};
++    local.sin_family = AF_INET;
++    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    ASSERT_EQ(bind(socket, reinterpret_cast<const sockaddr *>(&local), sizeof(local)), 0);
++    int length = sizeof(local);
++    ASSERT_EQ(getsockname(socket, reinterpret_cast<sockaddr *>(&local), &length), 0);
++    auto owner = application_for_connection(reinterpret_cast<const sockaddr *>(&local), nullptr, IPPROTO_UDP);
++    closesocket(socket);
++    WSACleanup();
++    ASSERT_TRUE(owner);
++    EXPECT_NE(owner->find("test_application_routes"), std::string::npos);
++}
++// NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
++#endif
++
++int main(int argc, char **argv) {
++    testing::InitGoogleTest(&argc, argv);
++    return RUN_ALL_TESTS();
++}

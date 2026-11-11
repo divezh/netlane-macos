@@ -124,10 +124,10 @@ public enum EngineEvent: Equatable {
     }
 }
 
-/// The pinned engine: the official TrustTunnel client for macOS (universal), checked by SHA-256.
+/// The engine: TrustTunnel Client 1.1.11 built from source with our patches (engine/upstream): routing by
+/// application (on macOS — by process name, helpers and bundles included) and the kill-switch retention
+/// shared with the Windows client. Built by engine/build-engine.sh.
 public enum EngineSpec {
-    public static let version = "1.1.11"
-    public static let archiveUrl = "https://github.com/TrustTunnel/TrustTunnelClient/releases/download/v1.1.11/trusttunnel_client-v1.1.11-macos-universal.tar.gz"
-    public static let archiveSha256 = "e2c67aaea941fcdcfc24ec9868164462fcea8d1f731f6928c49bbef300dcf1a3"
+    public static let version = "1.1.11-netlane.1"
     public static let executableName = "trusttunnel_client"
 }

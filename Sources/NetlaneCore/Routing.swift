@@ -72,15 +72,43 @@ public struct Routing: Codable, Equatable, Sendable {
     }
 
     public var summary: String {
-        if destinations.isEmpty { return mode == "general" ? "Весь трафик через VPN" : "Весь трафик напрямую" }
-        return (mode == "general" ? "Напрямую: " : "Через VPN: ") + Plural.addresses(destinations.count)
+        var parts: [String] = []
+        if !destinations.isEmpty { parts.append(Plural.addresses(destinations.count)) }
+        let programs = macApplications.count
+        if programs > 0 { parts.append(Plural.form(programs, "программа", "программы", "программ")) }
+        if parts.isEmpty { return mode == "general" ? "Весь трафик через VPN" : "Весь трафик напрямую" }
+        return (mode == "general" ? "Напрямую: " : "Через VPN: ") + parts.joined(separator: ", ")
     }
 
-    /// Top-level routing keys of the engine config. Application rules are left out: the macOS engine has none.
-    public func engineConfig() throws -> String {
+    /// Process names this set routes on macOS. Rules keep the Windows form shared with the panel
+    /// («Jivo.exe»); on a Mac the same rule means the process «Jivo» and its helpers. Rules with a full
+    /// Windows path have no Mac counterpart and are left out.
+    public var macApplications: [(name: String, action: String)] {
+        applications.compactMap { app in
+            guard let name = app.name, name.lowercased().hasSuffix(".exe") else { return nil }
+            return (String(name.dropLast(4)), app.action)
+        }
+    }
+    /// Rules with a full Windows path (C:\…\app.exe): kept for the Windows client, not applied on a Mac.
+    public var windowsOnlyApplications: Int { applications.filter { $0.executable != nil }.count }
+
+    /// Top-level routing keys of the engine config, and the application rules after them.
+    public func engineConfig() throws -> (keys: String, applicationRules: String) {
         var copy = self
         try copy.validate()
-        return "vpn_mode = " + Text.tomlQuote(copy.mode) + "\nexclusions = [" + copy.destinations.map(Text.tomlQuote).joined(separator: ", ") + "]\n"
+        let keys = "vpn_mode = " + Text.tomlQuote(copy.mode) + "\nexclusions = [" + copy.destinations.map(Text.tomlQuote).joined(separator: ", ") + "]\n"
+        let rules = copy.macApplications.map { "[[application_rules]]\nprocess_name = " + Text.tomlQuote($0.name) + "\naction = " + Text.tomlQuote($0.action) + "\n" }.joined()
+        return (keys, rules)
+    }
+
+    /// One line of the Mac editor («Jivo» or «Jivo.exe») → the shared rule name «Jivo.exe».
+    public static func applicationName(_ line: String) throws -> String {
+        let value = line.trimmingCharacters(in: .whitespaces)
+        let forbidden: Set<Character> = ["\\", "/", ":", "*", "?", "\"", "<", ">", "|"]
+        if value.isEmpty || value.count > 251 || value.contains(where: { forbidden.contains($0) }) || Text.hasControl(value) {
+            throw FormatError("Имя программы — как в «Мониторинге системы», например Jivo, без пути и символов \\ / : * ? \" < > |.")
+        }
+        return value.lowercased().hasSuffix(".exe") ? value : value + ".exe"
     }
 
     /// Reads {"Mode", "Destinations", "Applications"} whatever the case of the keys (panel and Windows files differ).
