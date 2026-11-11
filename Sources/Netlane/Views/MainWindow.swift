@@ -80,17 +80,33 @@ struct Sidebar: View {
             }
             Rectangle().fill(Theme.line).frame(height: 1).padding(.horizontal, 4)
             let account = model.accountLine
+            let subscription = model.state.subscription(of: model.selectedServer)
+            let refreshing = subscription.map { model.refreshing.contains($0.id) } ?? false
             Button(action: accountTapped) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(account.title).font(.system(size: 13, weight: .semibold)).foregroundColor(Theme.ink).lineLimit(1)
-                    Text(account.detail).font(.system(size: 11)).foregroundColor(Theme.level(account.level)).lineLimit(1)
+                HStack(alignment: .center, spacing: 10) {
+                    if subscription != nil {
+                        // The arrow says the line is a button: a click refreshes the subscription.
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(refreshing ? Theme.accent : Theme.muted)
+                            .rotationEffect(.degrees(refreshing ? 360 : 0))
+                            .animation(refreshing ? .linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: refreshing)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(Theme.raised))
+                            .overlay(Circle().stroke(Theme.line))
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(account.title).font(.system(size: 13, weight: .semibold)).foregroundColor(Theme.ink).lineLimit(1)
+                        Text(refreshing ? "обновляется…" : account.detail).font(.system(size: 11)).foregroundColor(refreshing ? Theme.faint : Theme.level(account.level)).lineLimit(1)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(model.state.subscription(of: model.selectedServer) == nil ? "Сервер добавлен вручную." : "Обновить подписку")
+            .disabled(refreshing)
+            .help(subscription == nil ? "Сервер добавлен вручную." : "Обновить подписку")
         }
         .padding(.horizontal, 8).padding(.top, 12).padding(.bottom, 10)
         .background(Theme.card)

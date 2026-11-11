@@ -98,9 +98,9 @@ struct ServersView: View {
                 Button("HTTP/2") { model.setTransport("http2", for: server.id) }
                 Button("HTTP/3") { model.setTransport("http3", for: server.id) }
             } label: {
-                Text(choice == "profile" ? Server.transportTitle(server.transport) : Server.transportTitle(choice)).font(.system(size: 12))
+                DropdownLabel(text: choice == "profile" ? Server.transportTitle(server.transport) : Server.transportTitle(choice))
             }
-            .menuStyle(.borderlessButton).frame(width: 86)
+            .dropdownFrame()
             Menu {
                 Button("Выбрать") { model.select(server: server.id); model.page = .home }
                 if source == nil { Button("Переименовать…") { newName = server.name; renaming = server } }

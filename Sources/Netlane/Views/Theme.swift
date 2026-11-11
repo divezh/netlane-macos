@@ -187,7 +187,30 @@ struct SpeedLane: View {
     }
 }
 
+/// The look of a drop-down choice: the value, a chevron, a border like the quiet buttons.
+struct DropdownLabel: View {
+    let text: String
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(text).font(.system(size: 12)).foregroundColor(Theme.ink).lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundColor(Theme.faint)
+        }
+    }
+}
+
 extension View {
+    /// A Menu drawn as a bordered drop-down (the system borderless menu has no frame on a dark ground).
+    func dropdownFrame() -> some View {
+        self.menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .frame(minHeight: 28)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.raised))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line))
+            .contentShape(Rectangle())
+    }
+
     /// The hand cursor over clickable rows and links.
     func handCursor() -> some View {
         onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }

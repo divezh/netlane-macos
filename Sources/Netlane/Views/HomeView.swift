@@ -183,10 +183,10 @@ private struct ConnectionBlock: View {
                     Divider()
                     Button("Настроить наборы…") { model.page = .rules }
                 } label: {
-                    Text(model.state.selectedRuleSet.name).font(.system(size: 12)).lineLimit(1)
+                    DropdownLabel(text: model.state.selectedRuleSet.name)
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 150, alignment: .trailing)
+                .dropdownFrame()
+                .frame(maxWidth: 170, alignment: .trailing)
                 .help("Набор правил маршрутизации. Переключение во время работы VPN переподключает его.")
             }
             if let server = model.selectedServer {
@@ -253,7 +253,7 @@ private struct ErrorBlock: View {
                         Button("HTTP/2") { model.setTransport("http2", for: server.id) }
                         Button("HTTP/3") { model.setTransport("http3", for: server.id) }
                     }
-                    .menuStyle(.borderlessButton).fixedSize()
+                    .dropdownFrame()
                 }
                 Spacer()
                 Button("Журнал") { model.page = .log }.buttonStyle(LinkButtonStyle())
