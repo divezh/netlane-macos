@@ -581,7 +581,7 @@ final class AppModel: ObservableObject {
         installingUpdate = true
         updateStatus = "Скачиваю версию " + manifest.version + "…"
         Task {
-            do { try await Updater.install(manifest) }
+            do { try await Updater.install(manifest) { [weak self] stage in self?.updateStatus = stage } }
             catch {
                 self.installingUpdate = false
                 self.updateStatus = (error as? FormatError)?.message ?? error.localizedDescription

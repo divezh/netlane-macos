@@ -6,6 +6,8 @@ APP="/Applications/Netlane.app"
 USER_ID=$(/usr/bin/stat -f %u /dev/console 2>/dev/null)
 /usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 case "$USER_ID" in ''|0|*[!0-9]*) exit 0 ;; esac
+# The app belongs to the user, so it can update itself later without an administrator password.
+/usr/sbin/chown -R "$USER_ID":staff "$APP" || true
 /bin/sh "$APP/Contents/Resources/install-helper.sh" "$APP/Contents/Resources" "$USER_ID" || true
 /bin/launchctl asuser "$USER_ID" /usr/bin/open "$APP" || true
 exit 0
