@@ -3,7 +3,7 @@ import SwiftUI
 import NetlaneCore
 
 /// `Netlane --render <folder>`: draws the window with made-up data into PNG files for the README
-/// (home.png — connected, rules.png — «Правила»). No disk state, no network, no VPN.
+/// (home, rules) and the user guide (empty, add). No disk state, no network, no VPN.
 enum Render {
     @MainActor
     static func demoState() throws -> ClientState {
@@ -37,6 +37,28 @@ enum Render {
         return state
     }
 
+    /// Draws one view off screen into folder/name.png.
+    @MainActor
+    static func snapshot<V: View>(_ view: V, size: NSSize, name: String, folder: String) throws {
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: view)
+        host.frame = NSRect(origin: .zero, size: size)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+        window.orderFrontRegardless()
+        // Let SwiftUI lay out and draw before the picture is taken.
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        host.layoutSubtreeIfNeeded()
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { throw FormatError("no bitmap") }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { throw FormatError("no png") }
+        let file = (folder as NSString).appendingPathComponent(name + ".png")
+        try png.write(to: URL(fileURLWithPath: file))
+        print("rendered " + file + " \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
+        window.orderOut(nil)
+    }
+
     @MainActor
     static func run(to folder: String) -> Never {
         let app = NSApplication.shared
@@ -44,29 +66,17 @@ enum Render {
         app.appearance = NSAppearance(named: .darkAqua)
         do {
             try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+            let window = NSSize(width: 920, height: 560)
             let model = AppModel(demo: try demoState())
             model.showDemoSession()
             for (name, page) in [("home", Page.home), ("rules", Page.rules)] {
                 model.page = page
-                let size = NSSize(width: 920, height: 560)
-                let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
-                window.appearance = NSAppearance(named: .darkAqua)
-                let host = NSHostingView(rootView: MainWindow().environmentObject(model))
-                host.frame = NSRect(origin: .zero, size: size)
-                window.contentView = host
-                window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
-                window.orderFrontRegardless()
-                // Let SwiftUI lay out and draw before the picture is taken.
-                RunLoop.main.run(until: Date().addingTimeInterval(1.5))
-                host.layoutSubtreeIfNeeded()
-                guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { throw FormatError("no bitmap") }
-                host.cacheDisplay(in: host.bounds, to: bitmap)
-                guard let png = bitmap.representation(using: .png, properties: [:]) else { throw FormatError("no png") }
-                let file = (folder as NSString).appendingPathComponent(name + ".png")
-                try png.write(to: URL(fileURLWithPath: file))
-                print("rendered " + file + " \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
-                window.orderOut(nil)
+                try snapshot(MainWindow().environmentObject(model), size: window, name: name, folder: folder)
             }
+            // For the user guide: the first start without servers and the «Добавить» sheet.
+            let empty = AppModel(demo: ClientState())
+            try snapshot(MainWindow().environmentObject(empty), size: window, name: "empty", folder: folder)
+            try snapshot(AddSheet(text: "https://vpn.example.com/sub/Xk3pQ9vL2mR8tY4w").environmentObject(empty), size: NSSize(width: 520, height: 230), name: "add", folder: folder)
             exit(0)
         } catch {
             FileHandle.standardError.write(Data(("render failed: \(error)\n").utf8))

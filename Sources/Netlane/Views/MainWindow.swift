@@ -122,7 +122,9 @@ struct Sidebar: View {
 struct AddSheet: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
+    @State private var text: String
+
+    init(text: String = "") { _text = State(initialValue: text) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

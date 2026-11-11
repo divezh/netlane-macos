@@ -86,7 +86,7 @@ final class AppModel: ObservableObject {
     /// For `--render`: the given state, no disk, no timers, no network.
     init(demo: ClientState) {
         state = demo
-        view = .idle
+        view = demo.selectedServer == nil ? .noProfile : .idle
     }
 
     init() {
