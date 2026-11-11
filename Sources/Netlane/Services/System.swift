@@ -133,7 +133,7 @@ enum Latency {
         let started = Date()
         return await withCheckedContinuation { (continuation: CheckedContinuation<Int?, Never>) in
             let once = Once()
-            func finish(_ value: Int?) {
+            @Sendable func finish(_ value: Int?) {
                 guard once.first() else { return }
                 connection.cancel()
                 continuation.resume(returning: value)

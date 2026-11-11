@@ -127,6 +127,9 @@ public struct FeedResult: Equatable, Sendable {
     /// The connected server's access data changed: the session should be restarted.
     public var currentChanged = false
     public var settingsChanged = false
+    public init(added: Int = 0, updated: Int = 0, removed: Int = 0, currentChanged: Bool = false, settingsChanged: Bool = false) {
+        self.added = added; self.updated = updated; self.removed = removed; self.currentChanged = currentChanged; self.settingsChanged = settingsChanged
+    }
 }
 
 extension ClientState {
