@@ -2,11 +2,9 @@ name: build
 
 # Builds and tests the macOS client on a GitHub-hosted runner and attests the archive's provenance.
 #
-# Every push to main and every pull request: tests, a universal Netlane.app, the archive as an artifact.
-# Publishing a GitHub Release (tag v*, created on the Releases page) additionally attaches the archive
-# and its SHA-256 to the release, and a published (not pre-) release becomes the update channel:
-# latest.json and the archive go to the "updates" branch, which installed clients read through
-# raw.githubusercontent.com (Sources/NetlaneCore/UpdateFeed.swift).
+# Every push to main and every pull request: tests, a universal Netlane.app, the pkg and zip as artifacts.
+# Publishing a GitHub Release (tag v*, created on the Releases page) additionally attaches them and their
+# SHA-256 to the release. Installed clients update from the latest release (UpdateFeed.swift).
 
 on:
   push:
@@ -17,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write      # release assets and the updates branch
+  contents: write      # release assets
   id-token: write      # artifact attestations
   attestations: write
 
@@ -129,47 +127,3 @@ jobs:
           printf '\n\nПроверка происхождения архива: `gh attestation verify Netlane-macos.zip --repo %s`\n' "$GITHUB_REPOSITORY" >> release-notes.md
           gh release upload "$tag" dist/Netlane-macos.pkg dist/Netlane-macos.pkg.sha256 dist/Netlane-macos.zip dist/Netlane-macos.zip.sha256 --clobber
           gh release edit "$tag" --title "Netlane $version" --notes-file release-notes.md
-
-      - name: Publish to the update channel
-        if: startsWith(github.ref, 'refs/tags/v') && !github.event.release.prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="$GITHUB_REF_NAME"; version="${tag#v}"
-          if [ "$(gh release view "$tag" --json isPrerelease --jq .isPrerelease)" = "true" ]; then echo "Pre-release: the update channel is left as it is."; exit 0; fi
-          hash=$(cut -d' ' -f1 dist/Netlane-macos.zip.sha256)
-          # The dialog shows one short line: the first points of this version's CHANGELOG section.
-          # The branch keeps one commit with the current version only, so old archives do not pile up.
-          channel="$RUNNER_TEMP/channel"; mkdir -p "$channel/v$version"
-          cp dist/Netlane-macos.zip dist/Netlane-macos.zip.sha256 "$channel/v$version/"
-          VERSION="$version" TAG="$tag" HASH="$hash" REPO="$GITHUB_REPOSITORY" python3 - > "$channel/latest.json" <<'PY'
-          import json, os, re
-          version = os.environ["VERSION"]
-          points, on = [], False
-          for line in open("CHANGELOG.md", encoding="utf-8"):
-              if line.startswith("## "):
-                  on = line.startswith("## " + version)
-                  continue
-              match = re.match(r"\s*[-*]\s+(.+)$", line)
-              if on and match:
-                  points.append(re.sub(r"[`*]", "", match.group(1)).strip())
-          notes = " ".join(points).strip()
-          if len(notes) > 240:
-              notes = notes[:240].rstrip() + "…"
-          repo = os.environ["REPO"]
-          print(json.dumps({
-              "version": version,
-              "url": f"https://raw.githubusercontent.com/{repo}/updates/v{version}/Netlane-macos.zip",
-              "mirror": f"https://github.com/{repo}/releases/download/{os.environ['TAG']}/Netlane-macos.zip",
-              "sha256": os.environ["HASH"],
-              "notes": notes or f"Netlane {version}",
-          }, ensure_ascii=False, indent=2))
-          PY
-          cd "$channel"
-          git init -q -b updates
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -q -m "Канал обновлений: $version"
-          git push --force "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" updates
-          cat latest.json

@@ -42,6 +42,6 @@ brew install cmake ninja      # и rustup для сборки движка
 scripts/build-app.sh          # → dist/Netlane-macos.pkg и .zip
 ```
 
-Релиз: поднять версию в `Sources/NetlaneCore/Support.swift` и CHANGELOG, опубликовать релиз `vX.Y.Z` — Actions соберёт его и обновит канал обновлений.
+Релиз: поднять версию в `Sources/NetlaneCore/Support.swift` и CHANGELOG, опубликовать релиз `vX.Y.Z` — Actions соберёт его; установленные клиенты увидят его как обновление.
 
 [MIT](LICENSE) · [сторонние компоненты](THIRD_PARTY_NOTICES.md) · об уязвимостях пишите приватно через [Security advisories](https://github.com/divezh/netlane-macos/security/advisories/new)

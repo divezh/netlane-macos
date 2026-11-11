@@ -4,11 +4,8 @@ import NetlaneCore
 /// Updates from the public channel (UpdateFeed): download, SHA-256 check, replace the app, start it again.
 enum Updater {
     static func fetchManifest() async throws -> UpdateManifest {
-        var channelError: String
-        do { return try UpdateFeed.parse(try await Net.text(UpdateFeed.manifestUrl, accept: "application/json")) }
-        catch { channelError = (error as? FormatError)?.message ?? error.localizedDescription }
         do { return try UpdateFeed.parseRelease(try await Net.text(UpdateFeed.releaseUrl, accept: "application/vnd.github+json")) }
-        catch { throw FormatError("Канал обновлений недоступен: " + channelError + " / " + ((error as? FormatError)?.message ?? error.localizedDescription)) }
+        catch { throw FormatError("Не удалось узнать последний релиз: " + ((error as? FormatError)?.message ?? error.localizedDescription)) }
     }
 
     /// A quarantined app opened straight from «Загрузки» runs from a read-only copy and cannot replace itself.

@@ -359,18 +359,17 @@ final class SessionTests: XCTestCase {
 
 final class UpdateTests: XCTestCase {
     let sha = String(repeating: "ab", count: 32)
-    func testManifest() throws {
-        let m = try UpdateFeed.parse("{\"version\":\"0.7.1\",\"url\":\"https://raw.githubusercontent.com/x/y.zip\",\"sha256\":\"\(sha.uppercased())\",\"notes\":\" Исправления \",\"mirror\":\"https://github.com/x/y.zip\"}")
-        XCTAssertEqual(m.version, "0.7.1"); XCTAssertEqual(m.sha256, sha); XCTAssertEqual(m.notes, "Исправления"); XCTAssertEqual(m.mirror, "https://github.com/x/y.zip")
-        XCTAssertTrue(m.isNewer(than: "0.7.0")); XCTAssertFalse(m.isNewer(than: "0.7.1")); XCTAssertFalse(m.isNewer(than: "0.10.0"))
-        for bad in ["{}", "[]", "{\"version\":\"x\",\"url\":\"https://a/b\",\"sha256\":\"\(sha)\"}", "{\"version\":\"1.0\",\"url\":\"http://a/b\",\"sha256\":\"\(sha)\"}", "{\"version\":\"1.0\",\"url\":\"https://a/b\",\"sha256\":\"abc\"}"] {
-            XCTAssertThrowsError(try UpdateFeed.parse(bad), bad)
-        }
+    func testNotes() {
+        XCTAssertEqual(UpdateFeed.releaseNotes("Новое:\n\n- Первое `x`.\r\n- **Второе**.\n\nПроверка происхождения"), "Первое x. Второе.")
+        XCTAssertNil(UpdateFeed.releaseNotes("## заголовок\nтекст")); XCTAssertNil(UpdateFeed.releaseNotes(nil))
+        XCTAssertEqual(UpdateFeed.releaseUrl, "https://api.github.com/repos/divezh/netlane-macos/releases/latest")
+        let m = UpdateManifest(version: "0.7.5", url: "https://github.com/x.zip", sha256: sha, notes: nil, mirror: nil)
+        XCTAssertTrue(m.isNewer(than: "0.7.4")); XCTAssertFalse(m.isNewer(than: "0.7.5")); XCTAssertFalse(m.isNewer(than: "0.10.0"))
     }
     func testRelease() throws {
-        let release = "{\"tag_name\":\"v0.8.0\",\"draft\":false,\"prerelease\":false,\"assets\":[{\"name\":\"other.zip\"},{\"name\":\"Netlane-macos.zip\",\"browser_download_url\":\"https://github.com/d/n/releases/download/v0.8.0/Netlane-macos.zip\",\"digest\":\"sha256:\(sha)\"}]}"
+        let release = "{\"tag_name\":\"v0.8.0\",\"draft\":false,\"prerelease\":false,\"body\":\"- Быстрее.\",\"assets\":[{\"name\":\"other.zip\"},{\"name\":\"Netlane-macos.zip\",\"browser_download_url\":\"https://github.com/d/n/releases/download/v0.8.0/Netlane-macos.zip\",\"digest\":\"sha256:\(sha)\"}]}"
         let m = try UpdateFeed.parseRelease(release)
-        XCTAssertEqual(m.version, "0.8.0"); XCTAssertEqual(m.sha256, sha)
+        XCTAssertEqual(m.version, "0.8.0"); XCTAssertEqual(m.sha256, sha); XCTAssertEqual(m.notes, "Быстрее.")
         XCTAssertThrowsError(try UpdateFeed.parseRelease(release.replacingOccurrences(of: "\"prerelease\":false", with: "\"prerelease\":true")))
         XCTAssertThrowsError(try UpdateFeed.parseRelease(release.replacingOccurrences(of: "Netlane-macos.zip\",\"browser", with: "X.zip\",\"browser")))
         XCTAssertThrowsError(try UpdateFeed.parseRelease(release.replacingOccurrences(of: "sha256:", with: "md5:")))
