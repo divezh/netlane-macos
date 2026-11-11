@@ -1,0 +1,5 @@
+#!/bin/sh
+# An open Netlane is closed before its files are replaced (the VPN stops with it).
+/usr/bin/pkill -x Netlane 2>/dev/null || true
+sleep 1
+exit 0

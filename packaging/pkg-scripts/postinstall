@@ -1,0 +1,11 @@
+#!/bin/sh
+# Runs as root after the installer has put Netlane.app into /Applications:
+# installs the VPN helper for the user at the screen (the installer already asked for the
+# administrator password, so the app will not ask again) and opens Netlane for that user.
+APP="/Applications/Netlane.app"
+USER_ID=$(/usr/bin/stat -f %u /dev/console 2>/dev/null)
+/usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+case "$USER_ID" in ''|0|*[!0-9]*) exit 0 ;; esac
+/bin/sh "$APP/Contents/Resources/install-helper.sh" "$APP/Contents/Resources" "$USER_ID" || true
+/bin/launchctl asuser "$USER_ID" /usr/bin/open "$APP" || true
+exit 0

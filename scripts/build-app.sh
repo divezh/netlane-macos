@@ -51,5 +51,18 @@ codesign --force --sign - "$APP"
 codesign --verify --strict "$APP"
 
 ditto -c -k --keepParent "$APP" dist/Netlane-macos.zip
-(cd dist && shasum -a 256 Netlane-macos.zip > Netlane-macos.zip.sha256 && cat Netlane-macos.zip.sha256)
+
+# Installer: puts the app into /Applications, installs the helper, opens Netlane (packaging/pkg-scripts).
+PKGROOT=.build/pkgroot
+rm -rf "$PKGROOT"; mkdir -p "$PKGROOT/Applications"
+ditto "$APP" "$PKGROOT/Applications/Netlane.app"
+pkgbuild --analyze --root "$PKGROOT" .build/components.plist >/dev/null
+# Not relocatable: always /Applications, never «wherever another copy happens to be».
+plutil -replace 0.BundleIsRelocatable -bool NO .build/components.plist
+pkgbuild --root "$PKGROOT" --component-plist .build/components.plist --identifier io.github.divezh.netlane \
+    --version "$VERSION" --install-location / --scripts packaging/pkg-scripts .build/Netlane-component.pkg
+sed "s/@VERSION@/$VERSION/g" packaging/distribution.xml > .build/distribution.xml
+productbuild --distribution .build/distribution.xml --resources packaging/resources --package-path .build dist/Netlane-macos.pkg
+
+(cd dist && shasum -a 256 Netlane-macos.zip > Netlane-macos.zip.sha256 && shasum -a 256 Netlane-macos.pkg > Netlane-macos.pkg.sha256 && cat ./*.sha256)
 echo "Done: $APP"

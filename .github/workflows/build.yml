@@ -89,7 +89,9 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: dist/Netlane-macos.zip
+          subject-path: |
+            dist/Netlane-macos.zip
+            dist/Netlane-macos.pkg
 
       - name: Upload archive
         uses: actions/upload-artifact@v5
@@ -98,6 +100,8 @@ jobs:
           path: |
             dist/Netlane-macos.zip
             dist/Netlane-macos.zip.sha256
+            dist/Netlane-macos.pkg
+            dist/Netlane-macos.pkg.sha256
           if-no-files-found: error
 
       - name: Publish release
@@ -110,7 +114,7 @@ jobs:
           awk -v v="$version" '/^## /{on = index($0, "## " v) == 1; next} on' CHANGELOG.md > release-notes.md
           [ -s release-notes.md ] || echo "Netlane $version" > release-notes.md
           printf '\n\nПроверка происхождения архива: `gh attestation verify Netlane-macos.zip --repo %s`\n' "$GITHUB_REPOSITORY" >> release-notes.md
-          gh release upload "$tag" dist/Netlane-macos.zip dist/Netlane-macos.zip.sha256 --clobber
+          gh release upload "$tag" dist/Netlane-macos.pkg dist/Netlane-macos.pkg.sha256 dist/Netlane-macos.zip dist/Netlane-macos.zip.sha256 --clobber
           gh release edit "$tag" --title "Netlane $version" --notes-file release-notes.md
 
       - name: Publish to the update channel
