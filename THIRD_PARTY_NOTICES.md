@@ -4,7 +4,7 @@ Netlane распространяется по лицензии MIT (`LICENSE`). 
 
 ## TrustTunnel Client
 
-Движок `Netlane.app/Contents/Resources/engine/trusttunnel_client` — официальная сборка TrustTunnel Client для macOS, Copyright AdGuard Software Limited, лицензия Apache License 2.0. Файл не изменён; версия и SHA-256 архива закреплены в `Sources/NetlaneCore/Session.swift`.
+Движок `Netlane.app/Contents/Resources/engine/trusttunnel_client` — TrustTunnel Client 1.1.11, Copyright AdGuard Software Limited, лицензия Apache License 2.0. Собран из исходников (коммит c0990e174fc75b2e52acd15882c62e69a3022581) с изменениями Netlane: патчи и сценарий сборки — в каталоге `engine` этого репозитория.
 
 - https://github.com/TrustTunnel/TrustTunnelClient
 - Полный текст лицензии: `Contents/Resources/engine/LICENSE.txt` в собранном приложении.

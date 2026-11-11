@@ -31,7 +31,7 @@ cd "$SRC"
 python3 -m venv env
 # shellcheck disable=SC1091
 . env/bin/activate
-pip install -q -r requirements.txt
+pip install -q -r requirements.txt "conan>=2.0.5,<3"
 export SKIP_VENV=1 TT_CLIENT_VERSION="$VERSION_LABEL"
 python3 scripts/bootstrap_conan_deps.py
 conan profile detect --exist-ok >/dev/null
