@@ -85,6 +85,19 @@ jobs:
           ENGINE_BINARY: engine/dist/trusttunnel_client
         run: scripts/build-app.sh
 
+      - name: Screenshots for the README
+        if: github.event_name != 'release'
+        continue-on-error: true
+        run: dist/Netlane.app/Contents/MacOS/Netlane --render dist/screenshots
+
+      - name: Upload screenshots
+        if: github.event_name != 'release'
+        continue-on-error: true
+        uses: actions/upload-artifact@v5
+        with:
+          name: screenshots
+          path: dist/screenshots
+
       - name: Attest build provenance
         if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v3

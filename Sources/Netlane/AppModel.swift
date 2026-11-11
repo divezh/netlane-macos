@@ -83,6 +83,12 @@ final class AppModel: ObservableObject {
     private var lastSubscriptionCheck = Date.distantPast
     let startHidden = CommandLine.arguments.contains("--hidden")
 
+    /// For `--render`: the given state, no disk, no timers, no network.
+    init(demo: ClientState) {
+        state = demo
+        view = .idle
+    }
+
     init() {
         let loaded = StateStore.load()
         state = loaded.state
@@ -587,6 +593,24 @@ final class AppModel: ObservableObject {
                 self.updateStatus = (error as? FormatError)?.message ?? error.localizedDescription
             }
         }
+    }
+}
+
+extension AppModel {
+    /// A connected session with made-up numbers, for the README picture.
+    func showDemoSession() {
+        now = Date()
+        view = .connected
+        sessionStart = now.addingTimeInterval(-2537)
+        traffic = (1_932_735_283, 220_200_960)
+        downHistory = (0..<60).map { i in 900_000 + 700_000 * sin(Double(i) / 5) + Double((i * 7919) % 400_000) }
+        upHistory = (0..<60).map { i in 120_000 + 80_000 * sin(Double(i) / 7 + 1) + Double((i * 104_729) % 60_000) }
+        downRate = downHistory.last ?? 0
+        upRate = upHistory.last ?? 0
+        for (i, server) in state.servers.enumerated() { pings[server.id] = PingValue(milliseconds: [38, 47, 61, 112][i % 4], detail: "") }
+        pingCheckedAt = now.addingTimeInterval(-120)
+        ip = .known(PublicIp(address: "203.0.113.24", country: "NL"))
+        helper = .ready
     }
 }
 

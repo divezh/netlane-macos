@@ -9,4 +9,7 @@ func applyUpdateIfAsked() {
 }
 
 applyUpdateIfAsked()
+if let index = CommandLine.arguments.firstIndex(of: "--render"), CommandLine.arguments.count > index + 1 {
+    MainActor.assumeIsolated { Render.run(to: CommandLine.arguments[index + 1]) }
+}
 NetlaneApp.main()

@@ -74,6 +74,7 @@ public struct PublicIp: Equatable, Sendable {
     public static let traceUrl = "https://www.cloudflare.com/cdn-cgi/trace"
     public var address: String
     public var country: String?
+    public init(address: String, country: String?) { self.address = address; self.country = country }
 
     public static func parse(_ trace: String) throws -> PublicIp {
         var address: String?, country: String?

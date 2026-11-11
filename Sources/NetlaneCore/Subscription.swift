@@ -61,6 +61,7 @@ public struct SubscriptionFeed: Sendable {
     public var settingsRevision: Int64 = 0
     public var accountStatus: String?, expiresAt: String?, quotaMonth: String?
     public var quotaBytes: Int64 = 0, quotaUsedBytes: Int64 = 0
+    public init() {}
 
     static func broken(_ why: String) -> FormatError { FormatError("Подписка повреждена: " + why + ".") }
 
