@@ -2,7 +2,7 @@
 
 # Netlane для macOS
 
-VPN-клиент для macOS 13 и новее (Apple Silicon и Intel) на базе [TrustTunnel](https://github.com/TrustTunnel/TrustTunnelClient). Подключается к вашему серверу по ссылке подписки. Те же возможности и тот же вид, что у [Netlane для Windows](https://github.com/divezh/netlane-windows) 0.7.0.
+VPN-клиент для macOS 13 и новее. Одна универсальная сборка для Mac на Intel и на Apple Silicon на базе [TrustTunnel](https://github.com/TrustTunnel/TrustTunnelClient). Подключается к вашему серверу по ссылке подписки. Те же возможности и тот же вид, что у [Netlane для Windows](https://github.com/divezh/netlane-windows) 0.7.0.
 
 ## Установка
 
