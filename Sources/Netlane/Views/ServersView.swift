@@ -92,15 +92,12 @@ struct ServersView: View {
                     .font(.system(size: 11)).foregroundColor(Theme.faint).lineLimit(1)
             }
             Spacer(minLength: 8)
-            Menu {
-                Button("Как в профиле (" + Server.transportTitle(server.transport) + ")") { model.setTransport(nil, for: server.id) }
-                Button("Авто") { model.setTransport("auto", for: server.id) }
-                Button("HTTP/2") { model.setTransport("http2", for: server.id) }
-                Button("HTTP/3") { model.setTransport("http3", for: server.id) }
-            } label: {
-                DropdownLabel(text: choice == "profile" ? Server.transportTitle(server.transport) : Server.transportTitle(choice))
+            DropdownButton(title: choice == "profile" ? Server.transportTitle(server.transport) : Server.transportTitle(choice)) {
+                [.item("Как в профиле (" + Server.transportTitle(server.transport) + ")", checked: choice == "profile") { model.setTransport(nil, for: server.id) },
+                 .item("Авто", checked: choice == "auto") { model.setTransport("auto", for: server.id) },
+                 .item("HTTP/2", checked: choice == "http2") { model.setTransport("http2", for: server.id) },
+                 .item("HTTP/3", checked: choice == "http3") { model.setTransport("http3", for: server.id) }]
             }
-            .dropdownFrame()
             Menu {
                 Button("Выбрать") { model.select(server: server.id); model.page = .home }
                 if source == nil { Button("Переименовать…") { newName = server.name; renaming = server } }

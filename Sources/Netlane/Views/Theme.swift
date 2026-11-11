@@ -187,36 +187,75 @@ struct SpeedLane: View {
     }
 }
 
-/// The value shown in a drop-down. Only text: macOS puts any image of a menu label before the text,
-/// so the arrow is drawn by `dropdownFrame` instead.
-struct DropdownLabel: View {
-    let text: String
-    var body: some View {
-        Text(text).font(.system(size: 12)).foregroundColor(Theme.ink).lineLimit(1)
-    }
+/// One line of a drop-down menu.
+enum DropdownItem {
+    case item(String, checked: Bool = false, action: () -> Void)
+    case separator
 }
 
-extension View {
-    /// A Menu drawn as a bordered drop-down with one arrow pointing down on the right.
-    func dropdownFrame() -> some View {
-        self.menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .padding(.leading, 10)
-            .padding(.trailing, 26)
+/// A bordered drop-down: the whole frame (text, arrow, padding) is one button, and the menu opens right
+/// under it. SwiftUI's Menu only reacts to clicks on its own text and puts any image before the text.
+struct DropdownButton: View {
+    let title: String
+    let items: () -> [DropdownItem]
+    @State private var frame: CGRect = .zero
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 8) {
+                Text(title).font(.system(size: 12)).foregroundColor(Theme.ink).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundColor(Theme.faint)
+            }
+            .padding(.horizontal, 10)
             .frame(minHeight: 28)
             .background(RoundedRectangle(cornerRadius: 8).fill(Theme.raised))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line))
-            .overlay(alignment: .trailing) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(Theme.faint)
-                    .padding(.trailing, 10)
-                    .allowsHitTesting(false)
-            }
             .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .background(GeometryReader { geometry in
+            Color.clear
+                .onAppear { frame = geometry.frame(in: .global) }
+                .onChange(of: geometry.frame(in: .global)) { frame = $0 }
+        })
     }
 
+    private func open() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.appearance = NSAppearance(named: .darkAqua)
+        var targets: [MenuTarget] = []
+        for entry in items() {
+            switch entry {
+            case .separator:
+                menu.addItem(.separator())
+            case .item(let text, let checked, let action):
+                let target = MenuTarget(action)
+                targets.append(target)
+                let item = NSMenuItem(title: text, action: #selector(MenuTarget.run), keyEquivalent: "")
+                item.target = target
+                item.state = checked ? .on : .off
+                menu.addItem(item)
+            }
+        }
+        guard let view = NSApp.keyWindow?.contentView ?? NSApp.mainWindow?.contentView else { return }
+        // SwiftUI's global frame counts from the window's top left; AppKit may count from the bottom.
+        let y = view.isFlipped ? frame.maxY + 4 : view.bounds.height - frame.maxY - 4
+        menu.minimumWidth = frame.width
+        menu.popUp(positioning: nil, at: NSPoint(x: frame.minX, y: y), in: view)
+        withExtendedLifetime(targets) {}
+    }
+}
+
+/// Keeps a closure alive as the target of an NSMenuItem.
+final class MenuTarget: NSObject {
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    @objc func run() { action() }
+}
+
+extension View {
     /// The hand cursor over clickable rows and links.
     func handCursor() -> some View {
         onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }

@@ -174,18 +174,15 @@ private struct ConnectionBlock: View {
                 .buttonStyle(.plain).help(line.hint)
             }
             row("Набор правил") {
-                Menu {
-                    ForEach(model.state.availableRuleSets) { set in
-                        Button(action: { model.select(ruleSet: set.id) }) {
-                            if set.id == model.state.selectedRuleSet.id { Label(set.name, systemImage: "checkmark") } else { Text(set.name) }
-                        }
+                DropdownButton(title: model.state.selectedRuleSet.name) {
+                    let selected = model.state.selectedRuleSet.id
+                    var items: [DropdownItem] = model.state.availableRuleSets.map { set in
+                        .item(set.name, checked: set.id == selected) { model.select(ruleSet: set.id) }
                     }
-                    Divider()
-                    Button("Настроить наборы…") { model.page = .rules }
-                } label: {
-                    DropdownLabel(text: model.state.selectedRuleSet.name)
+                    items.append(.separator)
+                    items.append(.item("Настроить наборы…") { model.page = .rules })
+                    return items
                 }
-                .dropdownFrame()
                 .frame(maxWidth: 170, alignment: .trailing)
                 .help("Набор правил маршрутизации. Переключение во время работы VPN переподключает его.")
             }
@@ -248,12 +245,11 @@ private struct ErrorBlock: View {
             }
             HStack(spacing: 8) {
                 if let server = model.selectedServer {
-                    Menu("Сменить транспорт…") {
-                        Button("Авто") { model.setTransport("auto", for: server.id) }
-                        Button("HTTP/2") { model.setTransport("http2", for: server.id) }
-                        Button("HTTP/3") { model.setTransport("http3", for: server.id) }
+                    DropdownButton(title: "Сменить транспорт") {
+                        [.item("Авто", checked: server.isAuto) { model.setTransport("auto", for: server.id) },
+                         .item("HTTP/2", checked: !server.isAuto && server.effectiveTransport == "http2") { model.setTransport("http2", for: server.id) },
+                         .item("HTTP/3", checked: !server.isAuto && server.effectiveTransport == "http3") { model.setTransport("http3", for: server.id) }]
                     }
-                    .dropdownFrame()
                 }
                 Spacer()
                 Button("Журнал") { model.page = .log }.buttonStyle(LinkButtonStyle())
