@@ -28,7 +28,7 @@ sudo launchctl print system/io.github.divezh.netlane.helper | head   # помо�
 curl -fsSL https://raw.githubusercontent.com/divezh/netlane-macos/main/uninstall.sh | sh
 ```
 
-Правило программы в наборе — имя процесса из «Мониторинга системы» (`Jivo`). Его вспомогательные процессы (`Jivo Helper (GPU)` и т. п.) входят в правило сами. В панели то же правило записывается как `Jivo.exe` и действует и на Windows.
+Правило программы в наборе — имя процесса из «Мониторинга системы» (`Chrome`) входят в правило сами. В панели то же правило записывается как `Chrome.exe` и действует и на Windows.
 
 ## Сборка
 
