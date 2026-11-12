@@ -105,7 +105,9 @@ final class AppModel: ObservableObject {
         refreshHelper()
         refreshIp()
         checkPings()
-        refreshDueSubscriptions()
+        // Every start fetches the subscriptions, as on Windows: fresh locations and rules, and the
+        // panel sees the version that is running now (also right after an update).
+        refreshDueSubscriptions(all: true)
         if state.autoConnect && state.selectedServer != nil { connect() }
         try? await Task.sleep(nanoseconds: 3_000_000_000)
         await checkForUpdates(manual: false)
@@ -490,9 +492,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func refreshDueSubscriptions() {
+    private func refreshDueSubscriptions(all: Bool = false) {
         lastSubscriptionCheck = Date()
-        for subscription in state.subscriptions where subscription.isDue(now: Date()) { refresh(subscription: subscription.id, announce: false) }
+        for subscription in state.subscriptions where all || subscription.isDue(now: Date()) { refresh(subscription: subscription.id, announce: false) }
     }
 
     func remove(subscription id: String) {
