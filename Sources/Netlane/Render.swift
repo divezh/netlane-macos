@@ -56,6 +56,18 @@ enum Render {
         let file = (folder as NSString).appendingPathComponent(name + ".png")
         try png.write(to: URL(fileURLWithPath: file))
         print("rendered " + file + " \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)")
+        // The same picture at 2x for retina screens and the website.
+        if let retina = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) {
+            retina.size = size
+            host.cacheDisplay(in: host.bounds, to: retina)
+            if let png2 = retina.representation(using: .png, properties: [:]) {
+                let file2 = (folder as NSString).appendingPathComponent(name + "@2x.png")
+                try png2.write(to: URL(fileURLWithPath: file2))
+                print("rendered " + file2 + " \(retina.pixelsWide)x\(retina.pixelsHigh)")
+            }
+        }
         window.orderOut(nil)
     }
 
