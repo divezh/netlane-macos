@@ -8,7 +8,7 @@ public struct FormatError: Error, LocalizedError, Equatable {
 }
 
 public enum AppInfo {
-    public static let version = "0.7.7"
+    public static let version = "0.7.8"
     public static let bundleId = "io.github.divezh.netlane"
     public static let userAgent = "Netlane/" + version + " (macOS)"
 }
