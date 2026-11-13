@@ -125,10 +125,10 @@ public enum EngineEvent: Equatable {
     }
 }
 
-/// The engine: TrustTunnel Client 1.1.11 built from source with our patches (engine/upstream): routing by
+/// The engine: TrustTunnel Client 1.1.12 built from source with our patches (engine/upstream): routing by
 /// application (on macOS — by process name, helpers and bundles included) and the kill-switch retention
 /// shared with the Windows client. Built by engine/build-engine.sh.
 public enum EngineSpec {
-    public static let version = "1.1.11-netlane.2"
+    public static let version = "1.1.12-netlane.1"
     public static let executableName = "trusttunnel_client"
 }

@@ -1,5 +1,5 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 0409039..96253bb 100644
+index 481f445..ae6488c 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -35,6 +35,8 @@ See [README.md](README.md) for full product details and
@@ -11,24 +11,11 @@ index 0409039..96253bb 100644
  | `platform/android/` | Android adapter (Kotlin/Gradle) |
  | `platform/apple/` | Apple adapter (Swift/ObjC, CocoaPods, XCFramework) |
  | `platform/windows/` | Windows adapter (C++/CMake) |
-diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 8c766f3..c9001ad 100644
---- a/CHANGELOG.md
-+++ b/CHANGELOG.md
-@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
- 
- ### Added
- 
-+- Add Windows `application_rules` for per-executable VPN/direct routing with VPN fallback for unknown owners, retain an established kill-switch tunnel until explicit stop after connection loss, and invoke Conan export scripts through Bash on Windows.
-+
- ### Changed
- 
- ### Deprecated
 diff --git a/Makefile b/Makefile
-index f7c0ff2..b52294b 100644
+index dfb0b17..b7fd2ce 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -189,20 +189,25 @@ clang-tidy: compile_commands
+@@ -188,20 +188,25 @@ clang-tidy: compile_commands
  
  ## Check c++ code formatting with clangd-tidy.
  .PHONY: clangd-tidy
@@ -63,7 +50,7 @@ index f7c0ff2..b52294b 100644
  
  ## Lint markdown files.
 diff --git a/core/src/upstream_multiplexer.h b/core/src/upstream_multiplexer.h
-index 780bb6c..631b4f1 100644
+index 780bb6c..387221b 100644
 --- a/core/src/upstream_multiplexer.h
 +++ b/core/src/upstream_multiplexer.h
 @@ -16,7 +16,9 @@ struct UpstreamInfo;
@@ -78,7 +65,7 @@ index 780bb6c..631b4f1 100644
      static constexpr size_t NEW_UPSTREAM_CONNECTIONS_NUM_THRESHOLD = 5;
  
 diff --git a/core/test/test_upstream_multiplexer.cpp b/core/test/test_upstream_multiplexer.cpp
-index eae039d..050d499 100644
+index eae039d..6804c84 100644
 --- a/core/test/test_upstream_multiplexer.cpp
 +++ b/core/test/test_upstream_multiplexer.cpp
 @@ -285,7 +285,7 @@ TEST_F(UpstreamMuxTest, LeastLoaded) {
@@ -144,7 +131,7 @@ index fdb41f4..f492b44 100755
      remove_dir_if_exists(dns_libs_dir)
  
 diff --git a/trusttunnel/CMakeLists.txt b/trusttunnel/CMakeLists.txt
-index a2f81c4..972390b 100644
+index ddc2305..c98c866 100644
 --- a/trusttunnel/CMakeLists.txt
 +++ b/trusttunnel/CMakeLists.txt
 @@ -23,6 +23,7 @@ if (MSVC)
@@ -165,7 +152,7 @@ index a2f81c4..972390b 100644
  target_link_libraries(vpnlibs_trusttunnel magic_enum::magic_enum)
  target_link_libraries(vpnlibs_trusttunnel tomlplusplus::tomlplusplus)
  target_link_libraries(vpnlibs_trusttunnel nlohmann_json::nlohmann_json)
-@@ -310,3 +314,4 @@ include(${VPN_LIB_DIR}/cmake/add_unit_test.cmake)
+@@ -314,3 +318,4 @@ include(${VPN_LIB_DIR}/cmake/add_unit_test.cmake)
  set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/test)
  
  add_unit_test(test_persistent_ring_buffer "${TEST_DIR}" "" TRUE TRUE)
@@ -622,7 +609,7 @@ index 4005d44..a4a48d4 100644
          for (const auto &e : *x) {
              if (std::optional ex = e.value<std::string_view>(); ex.has_value() && !ex->empty()) {
 diff --git a/trusttunnel/src/trusttunnel_client.cpp b/trusttunnel/src/trusttunnel_client.cpp
-index 52aa226..7673855 100644
+index 5aa4ea5..58cffad 100644
 --- a/trusttunnel/src/trusttunnel_client.cpp
 +++ b/trusttunnel/src/trusttunnel_client.cpp
 @@ -22,6 +22,7 @@
@@ -632,8 +619,8 @@ index 52aa226..7673855 100644
 +#include "vpn/trusttunnel/session_policy.h"
  #include "vpn/trusttunnel/version.h"
  
- #ifdef __APPLE__
-@@ -48,7 +49,7 @@ static std::weak_ptr<TrustTunnelClient> g_client;
+ #ifdef __mips__
+@@ -52,7 +53,7 @@ static std::weak_ptr<TrustTunnelClient> g_client;
  
  static std::function<void(SocketProtectEvent *)> get_protect_socket_callback(const TrustTunnelConfig &config);
  static std::function<void(VpnVerifyCertificateEvent *)> get_verify_certificate_callback();
@@ -642,7 +629,7 @@ index 52aa226..7673855 100644
  static std::function<void(VpnConnectionInfoEvent *)> get_connection_info_callback();
  
  #ifdef _WIN32
-@@ -185,7 +186,8 @@ int run_client(const cxxopts::ParseResult &cli_args) {
+@@ -194,7 +195,8 @@ int run_client(const cxxopts::ParseResult &cli_args) {
      VpnCallbacks callbacks = {
              .protect_handler = get_protect_socket_callback(config),
              .verify_handler = get_verify_certificate_callback(),
@@ -652,7 +639,7 @@ index 52aa226..7673855 100644
              .connection_info_handler = get_connection_info_callback(),
      };
  
-@@ -315,13 +317,17 @@ static std::function<void(VpnVerifyCertificateEvent *)> get_verify_certificate_c
+@@ -324,13 +326,17 @@ static std::function<void(VpnVerifyCertificateEvent *)> get_verify_certificate_c
      };
  }
  
@@ -672,7 +659,7 @@ index 52aa226..7673855 100644
              stop_trusttunnel_client();
              break;
          case VPN_SS_WAITING_RECOVERY:
-@@ -330,6 +336,7 @@ static std::function<void(VpnStateChangedEvent *)> get_state_changed_callback()
+@@ -339,6 +345,7 @@ static std::function<void(VpnStateChangedEvent *)> get_state_changed_callback()
                      safe_to_string_view(event->waiting_recovery_info.error.text));
              break;
          case VPN_SS_CONNECTED: {

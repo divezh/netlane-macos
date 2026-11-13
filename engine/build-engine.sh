@@ -11,12 +11,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${ENGINE_SOURCE:-$ROOT/.build/engine-src}"
-COMMIT=c0990e174fc75b2e52acd15882c62e69a3022581
+COMMIT=067deb837ed994d6ae902e3bb40b69f6266af216
 VERSION_LABEL="$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' "$ROOT/Sources/NetlaneCore/Session.swift" | head -1)"
 OUT="$ROOT/engine/dist"
 
 if [ ! -d "$SRC/.git" ]; then
-    git clone --branch v1.1.11 --depth 1 https://github.com/TrustTunnel/TrustTunnelClient.git "$SRC"
+    git clone --branch v1.1.12 --depth 1 https://github.com/TrustTunnel/TrustTunnelClient.git "$SRC"
 fi
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || { echo "unexpected upstream commit" >&2; exit 1; }
 
