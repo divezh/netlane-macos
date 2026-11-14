@@ -74,6 +74,50 @@ enum Helper {
 
     enum InstallError: Error { case cancelled, failed(String) }
 
+    /// The signed release archives of the versions this Mac updated to (see `upgrade`).
+    static var archives: URL {
+        URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Netlane/updates", isDirectory: true)
+    }
+    static func archivePaths(_ version: String) -> (zip: URL, signature: URL) {
+        let zip = archives.appendingPathComponent("Netlane-macos-" + version + ".zip")
+        return (zip, zip.appendingPathExtension("sig"))
+    }
+
+    /// Keeps the verified archive of the version being installed (only that one) for the helper upgrade.
+    static func keepArchive(_ zip: URL, signature: URL, version: String) {
+        let manager = FileManager.default
+        try? manager.removeItem(at: archives)
+        try? manager.createDirectory(at: archives, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let target = archivePaths(version)
+        try? manager.copyItem(at: zip, to: target.zip)
+        try? manager.copyItem(at: signature, to: target.signature)
+    }
+
+    /// Asks the running older helper to replace itself and the engine from the signed archive of this
+    /// version. The helper verifies the owner's signature itself and runs nothing from the user's files,
+    /// so this needs no administrator password. False when there is no archive or the helper is too old
+    /// to know the request: then `install` asks for the password once. Blocking.
+    static func upgrade() -> Bool {
+        let paths = archivePaths(AppInfo.version)
+        guard FileManager.default.fileExists(atPath: paths.zip.path), FileManager.default.fileExists(atPath: paths.signature.path),
+              let fd = open() else { return false }
+        var timeout = timeval(tv_sec: 90, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        send(fd, .upgrade(archive: paths.zip.path, signature: paths.signature.path))
+        var upgraded = false
+        readLines(fd) { line in
+            if case .event(.upgraded, _)? = HelperProtocol.decode(line) { upgraded = true }
+        }
+        Darwin.close(fd)
+        guard upgraded else { return false }
+        // launchd starts the new helper; wait until it answers with this version.
+        for _ in 0..<250 {
+            if status() == .ready { try? FileManager.default.removeItem(at: archives); return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
+    }
+
     /// Runs a script from the app's resources as root; macOS shows its administrator prompt.
     private static func runAsRoot(script: String, arguments: [String], prompt: String) throws {
         let path = resources + "/" + script

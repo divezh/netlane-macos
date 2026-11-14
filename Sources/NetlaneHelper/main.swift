@@ -139,6 +139,8 @@ func tunnelInterfaces() -> Set<String> {
 final class Session {
     static let gate = NSLock()
     static var current: Session?
+    /// Set while an upgrade replaces the helper and the engine: no session may start meanwhile.
+    static var upgrading = false
 
     let options: Options
     let peer: Peer
@@ -261,18 +263,101 @@ func serve(_ peer: Peer, _ options: Options) {
             peer.send(.hello(version: AppInfo.version, engine: EngineSpec.version))
         case .start(let profile):
             Session.gate.lock()
-            if Session.current != nil { Session.gate.unlock(); peer.send(.event(.busy, detail: nil)); return }
+            if Session.current != nil || Session.upgrading { Session.gate.unlock(); peer.send(.event(.busy, detail: nil)); return }
             let session = Session(options: options, peer: peer)
             Session.current = session
             Session.gate.unlock()
             session.run(profile)
             Session.gate.lock(); Session.current = nil; Session.gate.unlock()
             return
+        case .upgrade(let archive, let signature):
+            Session.gate.lock()
+            if Session.current != nil || Session.upgrading { Session.gate.unlock(); peer.send(.event(.busy, detail: nil)); return }
+            Session.upgrading = true
+            Session.gate.unlock()
+            do {
+                let version = try upgrade(archive: archive, signature: signature, options: options)
+                note("upgraded to \(version); restarting")
+                peer.send(.event(.upgraded, detail: version))
+                // launchd (KeepAlive) starts the new helper binary.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { unlink(options.socketPath); exit(0) }
+            } catch {
+                Session.gate.lock(); Session.upgrading = false; Session.gate.unlock()
+                note("upgrade refused: \((error as? FormatError)?.message ?? error.localizedDescription)")
+                peer.send(.event(.helperError, detail: (error as? FormatError)?.message ?? error.localizedDescription))
+            }
+            return
         default:
             peer.send(.event(.helperError, detail: "Неизвестный запрос."))
             return
         }
     }
+}
+
+// MARK: Upgrade
+
+/// Reads a regular file the app pointed to, without following a final link and within a size limit.
+func readFile(_ path: String, limit: Int) throws -> Data {
+    let fd = open(path, O_RDONLY | O_NOFOLLOW)
+    guard fd >= 0 else { throw FormatError("Не удалось открыть " + (path as NSString).lastPathComponent + ".") }
+    let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    var info = stat()
+    guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size >= 0, Int(info.st_size) <= limit else {
+        throw FormatError("Файл " + (path as NSString).lastPathComponent + " не подходит для обновления.")
+    }
+    let data = handle.readDataToEndOfFile()
+    guard data.count <= limit else { throw FormatError("Файл обновления слишком большой.") }
+    return data
+}
+
+/// Puts `source` at `target` as root:wheel 0755, by rename, so the target is never half-written.
+func place(_ source: String, at target: String) throws {
+    let temporary = target + ".new"
+    unlink(temporary)
+    try FileManager.default.copyItem(atPath: source, toPath: temporary)
+    guard chown(temporary, 0, 0) == 0 || getuid() != 0, chmod(temporary, 0o755) == 0, rename(temporary, target) == 0 else {
+        unlink(temporary)
+        throw FormatError("Не удалось заменить " + (target as NSString).lastPathComponent + ".")
+    }
+}
+
+func tool(_ path: String, _ arguments: [String]) -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return -1 }
+    process.waitUntilExit()
+    return process.terminationStatus
+}
+
+/// Replaces the helper and the engine from a release archive, after checking the owner's signature on
+/// the very bytes it unpacks. Refuses a version older than this helper. Returns the new version.
+func upgrade(archive: String, signature: String, options: Options) throws -> String {
+    let data = try readFile(archive, limit: 400 << 20)
+    let signed = try readFile(signature, limit: ReleaseSignature.maxSignatureBytes)
+    guard ReleaseSignature.verify(data, signature: signed) else { throw FormatError("Подпись архива не прошла проверку: обновление помощника отменено.") }
+    let work = HelperProtocol.supportDirectory + "/upgrade"
+    try? FileManager.default.removeItem(atPath: work)
+    try FileManager.default.createDirectory(atPath: work, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(atPath: work) }
+    let zip = work + "/release.zip"
+    guard FileManager.default.createFile(atPath: zip, contents: data, attributes: [.posixPermissions: 0o600]) else { throw FormatError("Не удалось сохранить архив обновления.") }
+    guard tool("/usr/bin/ditto", ["-x", "-k", zip, work + "/x"]) == 0 else { throw FormatError("Не удалось распаковать архив обновления.") }
+    _ = tool("/usr/bin/xattr", ["-dr", "com.apple.quarantine", work + "/x"])
+    let app = work + "/x/Netlane.app"
+    let plist = NSDictionary(contentsOfFile: app + "/Contents/Info.plist")
+    guard let version = plist?["CFBundleShortVersionString"] as? String, let offered = AppVersion(version), let mine = AppVersion(AppInfo.version) else {
+        throw FormatError("В архиве нет Netlane.app с версией.")
+    }
+    guard offered >= mine else { throw FormatError("Архив \(version) старше помощника \(AppInfo.version): откат не выполняется.") }
+    let helper = app + "/Contents/Resources/NetlaneHelper", engine = app + "/Contents/Resources/engine/" + EngineSpec.executableName
+    for path in [helper, engine] where !FileManager.default.isExecutableFile(atPath: path) {
+        throw FormatError("В архиве нет " + (path as NSString).lastPathComponent + ".")
+    }
+    try place(engine, at: options.enginePath)
+    try place(helper, at: HelperProtocol.installedHelper)
+    return version
 }
 
 let options = parseOptions()

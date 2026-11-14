@@ -7,6 +7,11 @@ import Foundation
 ///     app    → {"type":"start","profile":{…}}
 ///     helper → {"type":"event","value":"STARTED"} … {"type":"log","line":"…"} … {"type":"event","value":"STOPPED"}
 ///     app    → {"type":"stop"}          (closing the socket stops the engine as well)
+///     app    → {"type":"upgrade","archive":"/Users/…/Netlane-macos-0.8.0.zip","signature":"…zip.sig"}
+///     helper → {"type":"event","value":"UPGRADED"} and restarts itself (launchd), or HELPER_ERROR
+///
+/// An upgrade replaces the helper and the engine from a release archive that the helper verifies itself
+/// against the owner's release key: no administrator password and nothing run from the user's files.
 ///
 /// The helper never takes a command line or a config from the app: it gets a profile, checks it with
 /// the same rules as the app and writes the engine config itself.
@@ -21,7 +26,7 @@ public enum HelperProtocol {
     public enum Event: String, Sendable {
         case started = "STARTED", connected = "CONNECTED", reconnecting = "RECONNECTING", killSwitch = "KILL_SWITCH_ACTIVE"
         case connectionError = "CONNECTION_ERROR", stopping = "STOPPING", stopped = "STOPPED", stopFailed = "STOP_FAILED"
-        case busy = "BUSY", helperError = "HELPER_ERROR"
+        case busy = "BUSY", helperError = "HELPER_ERROR", upgraded = "UPGRADED"
     }
 
     public enum Message: Equatable, Sendable {
@@ -32,6 +37,7 @@ public enum HelperProtocol {
         case event(Event, detail: String?)
         case log(String)
         case tunnel(String)
+        case upgrade(archive: String, signature: String)
     }
 
     public static func encode(_ message: Message) -> String {
@@ -50,6 +56,7 @@ public enum HelperProtocol {
             if let detail = detail { object["detail"] = detail }
         case .log(let line): object = ["type": "log", "line": String(line.prefix(4000))]
         case .tunnel(let name): object = ["type": "tunnel", "name": name]
+        case .upgrade(let archive, let signature): object = ["type": "upgrade", "archive": archive, "signature": signature]
         }
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
         // JSONSerialization never emits raw newlines, so one message is always one line.
@@ -72,6 +79,10 @@ public enum HelperProtocol {
         case "tunnel":
             guard let name = Loose.string(object, "name"), Text.matches(name, "^[a-z]+[0-9]{1,4}$") else { return nil }
             return .tunnel(name)
+        case "upgrade":
+            guard let archive = Loose.string(object, "archive"), let signature = Loose.string(object, "signature"),
+                  archive.hasPrefix("/"), signature.hasPrefix("/"), archive.count <= 1024, signature.count <= 1024 else { return nil }
+            return .upgrade(archive: archive, signature: signature)
         default: return nil
         }
     }

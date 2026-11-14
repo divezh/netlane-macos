@@ -221,10 +221,15 @@ final class AppModel: ObservableObject {
             let status = await Task.detached { Helper.status() }.value
             if status != .ready {
                 self.helper = status == .missing ? .missing : .outdated("")
-                do { try await Task.detached { try Helper.install() }.value }
-                catch Helper.InstallError.cancelled { self.fail("Запрос прав администратора отменён. VPN не включён."); return }
-                catch Helper.InstallError.failed(let why) { self.fail("Не удалось установить помощник: " + why); return }
-                catch { self.fail("Не удалось установить помощник."); return }
+                // After an update the old helper upgrades itself from the signed archive, without a password.
+                var upgraded = false
+                if status != .missing { upgraded = await Task.detached { Helper.upgrade() }.value }
+                if !upgraded {
+                    do { try await Task.detached { try Helper.install() }.value }
+                    catch Helper.InstallError.cancelled { self.fail("Запрос прав администратора отменён. VPN не включён."); return }
+                    catch Helper.InstallError.failed(let why) { self.fail("Не удалось установить помощник: " + why); return }
+                    catch { self.fail("Не удалось установить помощник."); return }
+                }
             }
             self.helper = .ready
             guard self.view == .connecting, self.session == nil else { return }
@@ -286,7 +291,7 @@ final class AppModel: ObservableObject {
             case .stopFailed: say("Движок ещё завершает работу. Дождитесь отключения.")
             case .busy: errorText = "Помощник уже занят другой сессией VPN. Подождите несколько секунд и повторите."; sawFailure = true
             case .helperError: errorText = detail ?? "Помощник сообщил об ошибке."; sawFailure = true
-            case .stopped: break
+            case .stopped, .upgraded: break
             }
         default: break
         }

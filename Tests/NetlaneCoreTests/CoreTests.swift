@@ -367,12 +367,36 @@ final class UpdateTests: XCTestCase {
         XCTAssertTrue(m.isNewer(than: "0.7.4")); XCTAssertFalse(m.isNewer(than: "0.7.5")); XCTAssertFalse(m.isNewer(than: "0.10.0"))
     }
     func testRelease() throws {
-        let release = "{\"tag_name\":\"v0.8.0\",\"draft\":false,\"prerelease\":false,\"body\":\"- Быстрее.\",\"assets\":[{\"name\":\"other.zip\"},{\"name\":\"Netlane-macos.zip\",\"browser_download_url\":\"https://github.com/d/n/releases/download/v0.8.0/Netlane-macos.zip\",\"digest\":\"sha256:\(sha)\"}]}"
+        let unsigned = "{\"tag_name\":\"v0.8.0\",\"draft\":false,\"prerelease\":false,\"body\":\"- Быстрее.\",\"assets\":[{\"name\":\"other.zip\"},{\"name\":\"Netlane-macos.zip\",\"browser_download_url\":\"https://github.com/d/n/releases/download/v0.8.0/Netlane-macos.zip\",\"digest\":\"sha256:\(sha)\"}]}"
+        // A release without the owner's signature is not offered.
+        XCTAssertThrowsError(try UpdateFeed.parseRelease(unsigned))
+        let release = "{\"tag_name\":\"v0.8.0\",\"draft\":false,\"prerelease\":false,\"body\":\"- Быстрее.\",\"assets\":[{\"name\":\"Netlane-macos.zip.sig\",\"browser_download_url\":\"https://github.com/d/n/releases/download/v0.8.0/Netlane-macos.zip.sig\"},{\"name\":\"other.zip\"},{\"name\":\"Netlane-macos.zip\",\"browser_download_url\":\"https://github.com/d/n/releases/download/v0.8.0/Netlane-macos.zip\",\"digest\":\"sha256:\(sha)\"}]}"
         let m = try UpdateFeed.parseRelease(release)
         XCTAssertEqual(m.version, "0.8.0"); XCTAssertEqual(m.sha256, sha); XCTAssertEqual(m.notes, "Быстрее.")
+        XCTAssertEqual(m.signatureUrl, "https://github.com/d/n/releases/download/v0.8.0/Netlane-macos.zip.sig")
         XCTAssertThrowsError(try UpdateFeed.parseRelease(release.replacingOccurrences(of: "\"prerelease\":false", with: "\"prerelease\":true")))
         XCTAssertThrowsError(try UpdateFeed.parseRelease(release.replacingOccurrences(of: "Netlane-macos.zip\",\"browser", with: "X.zip\",\"browser")))
         XCTAssertThrowsError(try UpdateFeed.parseRelease(release.replacingOccurrences(of: "sha256:", with: "md5:")))
+    }
+}
+
+final class SignatureTests: XCTestCase {
+    /// A message signed with the real release key by `openssl dgst -sha256 -sign`.
+    let probe = Data("netlane signing check\n".utf8)
+    let probeSignature = Data(base64Encoded: "MEUCIEJ+pSkbXE6GxT5tJL+qDIzjdrIpgm4T1bV7pHGCHBP6AiEAkj/oowSb6uMMXTUuZM3AgVp8dxPMDN/9Ce8imW6e/cA=")!
+    func testOwnerSignature() throws {
+        #if canImport(CryptoKit)
+        XCTAssertTrue(ReleaseSignature.verify(probe, signature: probeSignature))
+        #else
+        throw XCTSkip("CryptoKit is macOS only")
+        #endif
+    }
+    func testForgeriesFail() {
+        XCTAssertFalse(ReleaseSignature.verify(Data("netlane signing check!\n".utf8), signature: probeSignature))
+        var bent = probeSignature; bent[bent.count - 1] ^= 1
+        XCTAssertFalse(ReleaseSignature.verify(probe, signature: bent))
+        XCTAssertFalse(ReleaseSignature.verify(probe, signature: Data(repeating: 0x30, count: 200)))
+        XCTAssertFalse(ReleaseSignature.verify(probe, signature: Data()))
     }
 }
 
@@ -381,7 +405,9 @@ final class HelperProtocolTests: XCTestCase {
         var profile = try Profile.import(fixture)
         profile.routing = Routing(mode: "selective", destinations: ["example.com"])
         let messages: [HelperProtocol.Message] = [.hello(version: nil, engine: nil), .hello(version: "0.7.0", engine: "1.1.11"), .start(profile), .stop,
-                                                 .event(.reconnecting, detail: "3"), .event(.stopped, detail: nil), .log("line \"quoted\" \\ end"), .tunnel("utun7")]
+                                                 .event(.reconnecting, detail: "3"), .event(.stopped, detail: nil), .log("line \"quoted\" \\ end"), .tunnel("utun7"),
+                                                 .upgrade(archive: "/Users/a/Library/Application Support/Netlane/updates/Netlane-macos-0.8.0.zip", signature: "/Users/a/x.sig"),
+                                                 .event(.upgraded, detail: "0.8.0")]
         for message in messages {
             let line = HelperProtocol.encode(message)
             XCTAssertFalse(line.contains("\n"))
@@ -390,7 +416,8 @@ final class HelperProtocolTests: XCTestCase {
     }
     func testBadMessages() {
         for bad in ["", "STOP", "{}", "{\"type\":\"run\",\"command\":\"rm\"}", "{\"type\":\"start\"}", "{\"type\":\"start\",\"profile\":{\"hostname\":\"x\"}}",
-                    "{\"type\":\"event\",\"value\":\"WHATEVER\"}", "{\"type\":\"tunnel\",\"name\":\"../etc\"}"] {
+                    "{\"type\":\"event\",\"value\":\"WHATEVER\"}", "{\"type\":\"tunnel\",\"name\":\"../etc\"}",
+                    "{\"type\":\"upgrade\",\"archive\":\"relative.zip\",\"signature\":\"/x.sig\"}", "{\"type\":\"upgrade\",\"archive\":\"/x.zip\"}"] {
             XCTAssertNil(HelperProtocol.decode(bad), bad)
         }
         // A profile that fails the checks (TLS name with a path) never reaches the engine.

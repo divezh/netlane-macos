@@ -48,12 +48,32 @@ enum Updater {
             }
         }
         guard let zip = archive else { throw FormatError(failure) }
+        // The owner's signature decides, not GitHub: without it nothing is unpacked or started.
+        progress("Проверяю подпись…")
+        guard let signatureUrl = manifest.signatureUrl else { try? FileManager.default.removeItem(at: zip); throw FormatError("Обновление не подписано владельцем.") }
+        let signatureFile: URL
+        do { signatureFile = try await Net.download(signatureUrl).file }
+        catch { try? FileManager.default.removeItem(at: zip); throw FormatError("Не удалось скачать подпись обновления.") }
+        let signed: Bool = await Task.detached(priority: .userInitiated) {
+            guard let data = try? Data(contentsOf: zip, options: .mappedIfSafe), let signature = try? Data(contentsOf: signatureFile) else { return false }
+            return ReleaseSignature.verify(data, signature: signature)
+        }.value
+        guard signed else {
+            try? FileManager.default.removeItem(at: zip); try? FileManager.default.removeItem(at: signatureFile)
+            log("signature check failed for \(manifest.version)")
+            throw FormatError("Подпись обновления не прошла проверку. Обновление не установлено.")
+        }
+        log("signature ok for \(manifest.version)")
+        // The new version upgrades the root helper from this very archive: the helper checks the
+        // signature again itself, so no administrator password is needed after an update.
+        Helper.keepArchive(zip, signature: signatureFile, version: manifest.version)
         progress("Распаковываю…")
         let executable: URL = try await Task.detached(priority: .userInitiated) {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Netlane-update-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             guard run("/usr/bin/ditto", ["-x", "-k", zip.path, folder.path]) == 0 else { throw FormatError("Не удалось распаковать обновление.") }
             try? FileManager.default.removeItem(at: zip)
+            try? FileManager.default.removeItem(at: signatureFile)
             let executable = folder.appendingPathComponent("Netlane.app/Contents/MacOS/Netlane")
             guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw FormatError("В архиве обновления нет Netlane.app.") }
             return executable

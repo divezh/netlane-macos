@@ -16,10 +16,12 @@ VPN-клиент на базе [TrustTunnel](https://github.com/TrustTunnel/Trus
 Или одной командой, без предупреждения macOS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/divezh/netlane-macos/main/install.sh | sh
+curl -fsSL https://github.com/divezh/netlane-macos/releases/latest/download/install.sh | sh
 ```
 
 Затем «Добавить сервер» → вставьте ссылку подписки от администратора.
+
+Архивы подписаны ключом владельца ([`netlane-release.pub`](netlane-release.pub)); приложение и помощник ставят обновления только с этой подписью. Проверка вручную: `openssl dgst -sha256 -verify netlane-release.pub -signature Netlane-macos.pkg.sig Netlane-macos.pkg`.
 
 ## Полезное
 

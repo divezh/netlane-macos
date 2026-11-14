@@ -6,8 +6,11 @@ APP="/Applications/Netlane.app"
 USER_ID=$(/usr/bin/stat -f %u /dev/console 2>/dev/null)
 /usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 case "$USER_ID" in ''|0|*[!0-9]*) exit 0 ;; esac
-# The app belongs to the user, so it can update itself later without an administrator password.
-/usr/sbin/chown -R "$USER_ID":staff "$APP" || true
+# The helper is installed from the payload the installer has just written as root, before the app is
+# handed to the user: nothing the user could have changed runs as root.
 /bin/sh "$APP/Contents/Resources/install-helper.sh" "$APP/Contents/Resources" "$USER_ID" || true
+# The app belongs to the user, so it can update itself later without an administrator password; the
+# helper then upgrades itself from the signed release archive (NetlaneHelper, «upgrade»).
+/usr/sbin/chown -R "$USER_ID":staff "$APP" || true
 /bin/launchctl asuser "$USER_ID" /usr/bin/open "$APP" || true
 exit 0

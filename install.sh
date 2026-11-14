@@ -1,8 +1,8 @@
 #!/bin/sh
 # Netlane for macOS, installed in one line:
-#   curl -fsSL https://raw.githubusercontent.com/divezh/netlane-macos/main/install.sh | sh
-# Downloads the archive of the latest release and its SHA-256, checks them, puts Netlane.app into
-# /Applications and opens it. Files downloaded by curl carry no quarantine mark, so macOS opens the
+#   curl -fsSL https://github.com/divezh/netlane-macos/releases/latest/download/install.sh | sh
+# Downloads the archive of the latest release, its SHA-256 and the owner's signature, checks them, puts
+# Netlane.app into /Applications and opens it. Files downloaded by curl carry no quarantine mark, so macOS opens the
 # app without the «unidentified developer» warning.
 set -eu
 LATEST="https://github.com/divezh/netlane-macos/releases/latest/download"
@@ -16,6 +16,16 @@ curl -fsSL "$LATEST/Netlane-macos.zip.sha256" -o "$WORK/sum"
 SHA="$(cut -d' ' -f1 "$WORK/sum")"
 ACTUAL="$(shasum -a 256 "$WORK/Netlane-macos.zip" | cut -d' ' -f1)"
 [ -n "$SHA" ] && [ "$ACTUAL" = "$SHA" ] || { echo "Контрольная сумма не совпала, установка отменена." >&2; exit 1; }
+# The owner's release key (netlane-release.pub): the private half is not on GitHub.
+curl -fsSL "$LATEST/Netlane-macos.zip.sig" -o "$WORK/Netlane-macos.zip.sig" || { echo "У релиза нет подписи владельца, установка отменена." >&2; exit 1; }
+cat > "$WORK/release.pub" <<'KEY'
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtcoVFvdfswZyFlDqvHPR4ZS7wxQL
+q7iwNHtv+nx0GBdMsfRqNxJEEuOmJQhX8K87n59fJ8x5K7SFVPT3EbPWdg==
+-----END PUBLIC KEY-----
+KEY
+/usr/bin/openssl dgst -sha256 -verify "$WORK/release.pub" -signature "$WORK/Netlane-macos.zip.sig" "$WORK/Netlane-macos.zip" >/dev/null 2>&1 ||
+    { echo "Подпись архива не прошла проверку, установка отменена." >&2; exit 1; }
 
 /usr/bin/ditto -x -k "$WORK/Netlane-macos.zip" "$WORK/app"
 [ -d "$WORK/app/Netlane.app" ] || { echo "В архиве нет Netlane.app." >&2; exit 1; }

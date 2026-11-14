@@ -5,6 +5,8 @@ import Foundation
 public struct UpdateManifest: Equatable, Sendable {
     public var version: String, url: String, sha256: String
     public var notes: String?, mirror: String?
+    /// The owner's signature of the archive (Netlane-macos.zip.sig): no update is installed without it.
+    public var signatureUrl: String? = nil
     public func isNewer(than current: String) -> Bool {
         guard let offered = AppVersion(version), let mine = AppVersion(current) else { return false }
         return offered > mine
@@ -27,7 +29,14 @@ public enum UpdateFeed {
         guard let asset = (root["assets"] as? [[String: Any]])?.first(where: { Loose.string($0, "name") == assetName }) else { throw FormatError("В последнем релизе нет " + assetName + ".") }
         var sha: String?
         if let digest = Loose.string(asset, "digest"), digest.lowercased().hasPrefix("sha256:") { sha = String(digest.dropFirst(7)) }
-        return try validate(tag, Loose.string(asset, "browser_download_url"), sha, releaseNotes(Loose.string(root, "body")), nil)
+        // An unsigned release is never installed, so it is not offered either.
+        let signature = (root["assets"] as? [[String: Any]])?.first(where: { Loose.string($0, "name") == assetName + ".sig" })
+        guard let signatureUrl = signature.flatMap({ Loose.string($0, "browser_download_url") }), isHttps(signatureUrl) else {
+            throw FormatError("Последний релиз не подписан владельцем.")
+        }
+        var manifest = try validate(tag, Loose.string(asset, "browser_download_url"), sha, releaseNotes(Loose.string(root, "body")), nil)
+        manifest.signatureUrl = signatureUrl
+        return manifest
     }
 
     /// The dialog shows one short line: the points of the release notes (the CHANGELOG section), joined.
