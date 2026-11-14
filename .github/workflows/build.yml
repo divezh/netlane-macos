@@ -13,9 +13,17 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag vX.Y.Z to draft from this commit (the tag is created when the draft is published)
+        required: false
+        default: ''
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
 
 jobs:
   # The engine with application routing: TrustTunnel Client built from source with engine/upstream/*.patch.
@@ -72,11 +80,11 @@ jobs:
           persist-credentials: false
 
       - name: Tag matches the client version
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
           # A tag that differs from AppInfo.version would offer the same update again after every install.
           version=$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' Sources/NetlaneCore/Support.swift | head -1)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then echo "Tag $GITHUB_REF_NAME does not match AppInfo.version $version" >&2; exit 1; fi
+          if [ "v$version" != "$RELEASE_TAG" ]; then echo "Tag $RELEASE_TAG does not match AppInfo.version $version" >&2; exit 1; fi
 
       - name: Download engine
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
@@ -90,12 +98,12 @@ jobs:
         run: scripts/build-app.sh
 
       - name: Screenshots for the README
-        if: "!startsWith(github.ref, 'refs/tags/')"
+        if: env.RELEASE_TAG == ''
         continue-on-error: true
         run: dist/Netlane.app/Contents/MacOS/Netlane --render dist/screenshots
 
       - name: Upload screenshots
-        if: "!startsWith(github.ref, 'refs/tags/')"
+        if: env.RELEASE_TAG == ''
         continue-on-error: true
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
@@ -122,13 +130,13 @@ jobs:
           if-no-files-found: error
 
       - name: Draft release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"; version="${tag#v}"
+          tag="$RELEASE_TAG"; version="${tag#v}"
           # Release notes: the CHANGELOG section of this version.
           awk -v v="$version" '/^## /{on = index($0, "## " v) == 1; next} on' CHANGELOG.md > release-notes.md
           [ -s release-notes.md ] || echo "Netlane $version" > release-notes.md
@@ -140,6 +148,6 @@ jobs:
             gh release upload "$tag" "${assets[@]}" --clobber
             gh release edit "$tag" --title "Netlane $version" --notes-file release-notes.md
           else
-            gh release create "$tag" "${assets[@]}" --draft --verify-tag --title "Netlane $version" --notes-file release-notes.md
+            gh release create "$tag" "${assets[@]}" --draft --target "$GITHUB_SHA" --title "Netlane $version" --notes-file release-notes.md
           fi
           echo "::notice::Draft $tag is ready: sign Netlane-macos.zip and Netlane-macos.pkg, then publish"
