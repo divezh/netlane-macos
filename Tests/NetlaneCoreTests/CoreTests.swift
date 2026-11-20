@@ -347,6 +347,12 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(EngineEvent.classify("05.11.2026 10:00:00.123456 ERROR [1] Failed to connect"), .failure)
         XCTAssertNil(EngineEvent.classify("05.11.2026 10:00:00.123456 WARN  [1] Failed to send DNS directly"))
         XCTAssertEqual(EngineEvent.classify("Error: cannot open config"), .failure)
+        // Engine 1.3.0 on a refused user (disabled, expired, quota, removed or wrong password), both transports.
+        XCTAssertTrue(EngineEvent.isAccessDenied("20.11.2026 19:45:35.285191 ERROR [34512] TRUSTTUNNEL_CLIENT_APP operator (): Error: 5 Authorization Required"))
+        XCTAssertFalse(EngineEvent.isAccessDenied("20.11.2026 19:45:35.285151 INFO  [34512] UPSTREAM_MUX child_upstream_handler: [3] Error on upstream id=0 is fatal, closing all upstreams: (5) Authorization Required"))
+        XCTAssertFalse(EngineEvent.isAccessDenied("05.11.2026 10:00:00.123456 ERROR [1] Failed to connect"))
+        XCTAssertEqual(EngineEvent.classify("20.11.2026 19:45:35.285191 ERROR [34512] TRUSTTUNNEL_CLIENT_APP operator (): Error: 5 Authorization Required"), .failure)
+        XCTAssertTrue(EngineEvent.accessDeniedText.contains("администратор"))
         XCTAssertNil(EngineEvent.classify("05.11.2026 10:00:00.123456 INFO  [1] Listening"))
     }
     func testFlagsAndVersions() {

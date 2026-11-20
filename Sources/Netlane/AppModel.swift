@@ -71,6 +71,8 @@ final class AppModel: ObservableObject {
     private var wantStop = false
     private var restartAfterStop = false
     private var sawFailure = false
+    /// The server refused the credentials in this session: no transport fallback, and the reason stays on screen.
+    @Published private(set) var accessDenied = false
     private var triedFallback = false
     private var fallbackServerId: String?
     private var tunnel: String?
@@ -150,6 +152,8 @@ final class AppModel: ObservableObject {
             logCounter += 1
             let line = String(piece)
             log.append(LogLine(id: logCounter, text: line, isError: line.contains(" ERROR ") || EngineEvent.isFailure(line)))
+            // The helper sends each line before its event, so this is known before .connectionError arrives.
+            if EngineEvent.isAccessDenied(line) { accessDenied = true; sawFailure = true; errorText = EngineEvent.accessDeniedText }
         }
         if log.count > 1500 { log.removeFirst(log.count - 1200) }
         EngineLog.write(text)
@@ -167,7 +171,7 @@ final class AppModel: ObservableObject {
         case .connected: return "Защищено"
         case .reconnecting: return "Переподключение…"
         case .killSwitch: return "Интернет заблокирован"
-        case .error: return "Не удалось подключиться"
+        case .error: return accessDenied ? "Доступ закрыт" : "Не удалось подключиться"
         case .disconnecting: return "Отключение…"
         }
     }
@@ -181,7 +185,7 @@ final class AppModel: ObservableObject {
         case .connecting: return "Ожидаем подтверждения от VPN-сервера…"
         case .disconnecting: return "Движок завершает соединение."
         case .reconnecting: return "Восстанавливаем соединение" + (reconnectSeconds > 0 ? ": следующая попытка через \(reconnectSeconds) с" : "")
-        case .killSwitch: return "Нажмите «Отключиться», чтобы снять блокировку интернета."
+        case .killSwitch: return accessDenied ? "Доступ закрыт сервером. Нажмите «Отключиться», чтобы вернуть интернет." : "Нажмите «Отключиться», чтобы снять блокировку интернета."
         case .error: return errorText ?? "Соединение не установлено. Проверьте доступ, срок, квоту и выбранный транспорт."
         default:
             var parts = [server.name, Server.transportTitle(server.effectiveTransport) + (server.isAuto ? " (авто)" : "")]
@@ -215,7 +219,7 @@ final class AppModel: ObservableObject {
         let profile: Profile
         do { profile = try state.sessionProfile() }
         catch { fail((error as? FormatError)?.message ?? "Профиль не прошёл проверку."); return }
-        view = .connecting; errorText = nil; sawFailure = false; wantStop = false; restartAfterStop = false
+        view = .connecting; errorText = nil; sawFailure = false; accessDenied = false; wantStop = false; restartAfterStop = false
         Task {
             // The helper is installed at the first connection and replaced after an update.
             let status = await Task.detached { Helper.status() }.value
@@ -273,7 +277,7 @@ final class AppModel: ObservableObject {
             case .started: break
             case .connected:
                 autoTask?.cancel()
-                view = .connected; errorText = nil; sawFailure = false
+                view = .connected; errorText = nil; sawFailure = false; accessDenied = false
                 if sessionStart == nil { sessionStart = Date() }
                 if let id = connectedServerId, let server = state.servers.first(where: { $0.id == id }), server.isAuto, server.autoTransport != server.effectiveTransport {
                     let used = server.effectiveTransport
@@ -286,7 +290,7 @@ final class AppModel: ObservableObject {
             case .killSwitch: view = .killSwitch
             case .connectionError:
                 sawFailure = true
-                if view == .connecting, let id = connectedServerId, let server = state.servers.first(where: { $0.id == id }), server.isAuto, server.effectiveTransport == "http3", !triedFallback { fallBackToHttp2() }
+                if !accessDenied, view == .connecting, let id = connectedServerId, let server = state.servers.first(where: { $0.id == id }), server.isAuto, server.effectiveTransport == "http3", !triedFallback { fallBackToHttp2() }
             case .stopping: if !restartAfterStop { view = .disconnecting }
             case .stopFailed: say("Движок ещё завершает работу. Дождитесь отключения.")
             case .busy: errorText = "Помощник уже занят другой сессией VPN. Подождите несколько секунд и повторите."; sawFailure = true

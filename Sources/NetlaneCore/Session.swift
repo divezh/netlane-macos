@@ -110,6 +110,10 @@ public enum EngineEvent: Equatable {
            !line[level].contains("ERROR") { return false }
         return line.contains("Error:") || line.contains("Failed to") || line.contains("Cannot create route")
     }
+    /// The endpoint refused the credentials (HTTP 407): the user is disabled, expired, out of quota, removed or the
+    /// password changed. Engine 1.3.0 reports it as «Error: 5 Authorization Required» on both transports.
+    public static func isAccessDenied(_ line: String) -> Bool { isFailure(line) && line.contains("Authorization Required") }
+    public static let accessDeniedText = "Сервер отказал в доступе: администратор отключил пользователя, истёк срок доступа, закончилась квота или сменился пароль. Обратитесь к администратору."
     /// The engine reports «Waiting recovery: to next=<ms> error=…» and reconnects on its own.
     public static func recoverySeconds(_ line: String) -> Int {
         guard let range = line.range(of: #"to next=(\d+)ms"#, options: .regularExpression),
