@@ -2,6 +2,10 @@
 
 Полные примечания и архивы доступны в [GitHub Releases](https://github.com/divezh/netlane-macos/releases).
 
+## Unreleased
+
+- Движок обновлён до TrustTunnel Client 1.3.0; перенесены правила приложений, удержание Kill Switch и DNS через VPN.
+
 ## 0.8.1 — 14 ноября 2026
 
 - Изменений в приложении нет: версия поднята вместе с Windows-клиентом, чтобы номера совпадали.

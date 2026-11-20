@@ -11,12 +11,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${ENGINE_SOURCE:-$ROOT/.build/engine-src}"
-COMMIT=067deb837ed994d6ae902e3bb40b69f6266af216
+COMMIT=232f151ea9864849a422666f1ce73ddc1bb4de3a
 VERSION_LABEL="$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' "$ROOT/Sources/NetlaneCore/Session.swift" | head -1)"
 OUT="$ROOT/engine/dist"
 
 if [ ! -d "$SRC/.git" ]; then
-    git clone --branch v1.1.12 --depth 1 https://github.com/TrustTunnel/TrustTunnelClient.git "$SRC"
+    git clone --branch v1.3.0 --depth 1 https://github.com/TrustTunnel/TrustTunnelClient.git "$SRC"
 fi
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$COMMIT" ] || { echo "unexpected upstream commit" >&2; exit 1; }
 
@@ -40,10 +40,10 @@ conan profile detect --exist-ok >/dev/null
 for arch in arm64 x86_64; do
     make PRESET=clang-relwithdebinfo ARCH="$arch" BUILD_DIR="build_$arch" SKIP_BOOTSTRAP=1 build_trusttunnel_client
 done
-# Unit tests of the routing code on this Mac's own architecture (real sockets, real libproc).
+# All native tests on this Mac's own architecture (real sockets, real libproc).
 HOST="$(uname -m)"
-cmake --build "build_$HOST" --target test_application_routes
-"build_$HOST/trusttunnel/test_application_routes"
+make PRESET=clang-relwithdebinfo ARCH="$HOST" BUILD_DIR="build_$HOST" SKIP_BOOTSTRAP=1 test
+make PRESET=clang-relwithdebinfo ARCH="$HOST" BUILD_DIR="build_$HOST" SKIP_BOOTSTRAP=1 lint
 
 mkdir -p "$OUT"
 lipo -create -output "$OUT/trusttunnel_client" build_arm64/trusttunnel/trusttunnel_client build_x86_64/trusttunnel/trusttunnel_client

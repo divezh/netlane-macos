@@ -1,8 +1,7 @@
 diff --git a/core/include/vpn/vpn.h b/core/include/vpn/vpn.h
-index cf58c01..bb625c7 100644
 --- a/core/include/vpn/vpn.h
 +++ b/core/include/vpn/vpn.h
-@@ -149,6 +149,14 @@ typedef struct {
+@@ -149,6 +149,14 @@
       * The default value is `false`.
       */
      bool dns_alt_exclusions_route;
@@ -18,10 +17,9 @@ index cf58c01..bb625c7 100644
  
  typedef struct {
 diff --git a/core/src/dns_handler.cpp b/core/src/dns_handler.cpp
-index c430c04..3044f5c 100644
 --- a/core/src/dns_handler.cpp
 +++ b/core/src/dns_handler.cpp
-@@ -921,6 +921,9 @@ void ag::DnsHandler::on_dns_request(const ConnectionInfo &info, U8View message)
+@@ -940,6 +940,9 @@
      DomainFilterMatchStatus status = ServerUpstream::vpn->domain_filter.match_domain(request.name);
      bool included = (ServerUpstream::vpn->exclusions_mode == VPN_MODE_GENERAL) ? (status == DFMS_DEFAULT)
                                                                                 : (status == DFMS_EXCLUSION);
@@ -32,23 +30,22 @@ index c430c04..3044f5c 100644
      if (included && m_client) {
          log_handler(this, dbg, "{} qname: {} -> DNS proxy", info, request.name);
 diff --git a/core/src/dns_handler.h b/core/src/dns_handler.h
-index 5b68c1d..c7e3500 100644
 --- a/core/src/dns_handler.h
 +++ b/core/src/dns_handler.h
-@@ -234,6 +234,8 @@ struct DnsHandlerParameters {
+@@ -234,6 +234,9 @@
       * their original destination instead of being redirected to the system DNS proxy.
       */
      bool alt_exclusions_route = false;
-+    /** Netlane: every query goes to the user-provided upstreams (see `VpnListenerConfig::dns_all_through_upstreams`). */
++    /** Netlane: every query goes to the user-provided upstreams (see `VpnListenerConfig::dns_all_through_upstreams`).
++     */
 +    bool all_through_upstreams = false;
  };
  
  class DnsHandler : public DnsHandlerServerUpstreamBase, public DnsHandlerClientListenerBase {
 diff --git a/core/src/tunnel.cpp b/core/src/tunnel.cpp
-index 1834898..c780986 100644
 --- a/core/src/tunnel.cpp
 +++ b/core/src/tunnel.cpp
-@@ -514,6 +514,7 @@ static std::optional<DnsHandlerParameters> make_dns_handler_parameters(Tunnel *s
+@@ -549,6 +549,7 @@
      DnsHandlerParameters parameters{
              .cert_verify_handler = self->vpn->parameters.cert_verify_handler,
              .alt_exclusions_route = self->vpn->listener_config.dns_alt_exclusions_route,
@@ -57,10 +54,9 @@ index 1834898..c780986 100644
      if (self->vpn->listener_config.dns_upstreams.size && self->vpn->dns_proxy_listener) {
          for (size_t i = 0; i < self->vpn->listener_config.dns_upstreams.size; ++i) {
 diff --git a/trusttunnel/include/vpn/trusttunnel/config.h b/trusttunnel/include/vpn/trusttunnel/config.h
-index 7fdc46a..d06f823 100644
 --- a/trusttunnel/include/vpn/trusttunnel/config.h
 +++ b/trusttunnel/include/vpn/trusttunnel/config.h
-@@ -59,6 +59,7 @@ struct TrustTunnelConfig {
+@@ -61,6 +61,7 @@
      ag::LogLevel loglevel = ag::LOG_LEVEL_INFO;
      ag::VpnMode mode = ag::VPN_MODE_GENERAL;
      bool killswitch_enabled = false;
@@ -69,10 +65,9 @@ index 7fdc46a..d06f823 100644
      bool post_quantum_group_enabled = true;
      bool exclusions_tcp_early_ack_enabled = false;
 diff --git a/trusttunnel/src/client.cpp b/trusttunnel/src/client.cpp
-index 6da03e4..9873036 100644
 --- a/trusttunnel/src/client.cpp
 +++ b/trusttunnel/src/client.cpp
-@@ -162,6 +162,7 @@ Error<TrustTunnelClient::ConnectResultError> TrustTunnelClient::vpn_runner(Liste
+@@ -165,6 +165,7 @@
  
      VpnListenerConfig listener_config = {
              .dns_upstreams = {.data = dns_upstreams.data(), .size = uint32_t(dns_upstreams.size())},
@@ -80,7 +75,7 @@ index 6da03e4..9873036 100644
      };
      VpnError error = vpn_listen(m_vpn, listener, &listener_config);
      if (error.code != 0) {
-@@ -534,7 +535,9 @@ void TrustTunnelClient::vpn_handler(void *, VpnEvent what, void *data) {
+@@ -551,7 +552,9 @@
                                      auto *context = (TaskContext *) arg;
                                      auto *info = context->info;
                                      if (context->vpn) {
@@ -92,10 +87,9 @@ index 6da03e4..9873036 100644
                                                      application_for_connection(context->source.c_sockaddr(),
                                                              context->destination.c_sockaddr(), context->protocol));
 diff --git a/trusttunnel/src/config.cpp b/trusttunnel/src/config.cpp
-index 0534389..a57dd96 100644
 --- a/trusttunnel/src/config.cpp
 +++ b/trusttunnel/src/config.cpp
-@@ -278,6 +278,7 @@ std::optional<TrustTunnelConfig> TrustTunnelConfig::build_config(const toml::tab
+@@ -450,6 +450,7 @@
      }
  
      result.killswitch_enabled = config["killswitch_enabled"].value_or<bool>(false);
@@ -104,13 +98,13 @@ index 0534389..a57dd96 100644
          for (const auto &a : *x) {
              if (const auto *i = a.as_integer()) {
 diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/test_application_routes.cpp
-index 2016607..284b0a1 100644
 --- a/trusttunnel/test/test_application_routes.cpp
 +++ b/trusttunnel/test/test_application_routes.cpp
-@@ -193,6 +193,19 @@ upstream_protocol = "http2"
+@@ -194,6 +194,19 @@
+ [listener.socks]
  address = "127.0.0.1:1080"
  )";
- 
++
 +TEST(DnsAllThroughVpn, ReadFromConfig) {
 +    auto off = toml::parse(BASE);
 +    ASSERT_TRUE(off);
@@ -123,7 +117,6 @@ index 2016607..284b0a1 100644
 +    ASSERT_TRUE(config);
 +    EXPECT_TRUE(config->dns_all_through_vpn);
 +}
-+
+ 
  TEST(ApplicationRoutes, RejectInvalidConfigRatherThanIgnoringRules) {
      for (const auto &rule : {"executable = 'browser.exe'\naction = 'direct'",
-                  "executable = 'C:\\Apps\\browser.exe'\naction = 'unknown'",

@@ -56,6 +56,10 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           brew list ninja >/dev/null 2>&1 || brew install ninja
+          brew list llvm >/dev/null 2>&1 || brew install llvm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          npm install -g markdownlint-cli
           command -v rustup >/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"; }
           engine/build-engine.sh
 

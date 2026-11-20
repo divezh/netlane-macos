@@ -1,5 +1,4 @@
 diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/application_routes.cpp
-index 244a6e6..e4130a0 100644
 --- a/trusttunnel/src/application_routes.cpp
 +++ b/trusttunnel/src/application_routes.cpp
 @@ -2,6 +2,7 @@
@@ -17,16 +16,16 @@ index 244a6e6..e4130a0 100644
 +#ifdef __APPLE__
 +#include <arpa/inet.h>
 +#include <libproc.h>
-+#include <unistd.h>
 +#include <netinet/in.h>
 +#include <sys/proc_info.h>
 +#include <sys/socket.h>
++#include <unistd.h>
 +#endif
 +
  namespace ag {
  
  static std::string normalized_path(std::string_view path) {
-@@ -20,6 +30,19 @@ static std::string normalized_path(std::string_view path) {
+@@ -20,6 +30,19 @@
      return result;
  }
  
@@ -46,12 +45,13 @@ index 244a6e6..e4130a0 100644
  bool valid_application_path(std::string_view path) {
      if (path.size() < 8 || path.size() > 4096 || !std::isalpha(static_cast<unsigned char>(path[0])) || path[1] != ':'
              || path[2] != '\\' || path.find("\\..\\") != std::string_view::npos
-@@ -33,7 +56,15 @@ bool valid_application_path(std::string_view path) {
+@@ -33,7 +56,15 @@
      });
      return suffix == ".exe";
  }
+-
 +#endif
- 
++
 +#ifdef __APPLE__
 +// macOS: the executable's file name as Activity Monitor shows it, e.g. "Jivo" (Clash PROCESS-NAME).
 +bool valid_process_name(std::string_view name) {
@@ -62,7 +62,7 @@ index 244a6e6..e4130a0 100644
  bool valid_process_name(std::string_view name) {
      if (name.size() < 5 || name.size() > 255 || name.find_first_of("\\/:*?\"<>|\r\n") != std::string_view::npos
              || name.find('\0') != std::string_view::npos) {
-@@ -45,6 +76,7 @@ bool valid_process_name(std::string_view name) {
+@@ -45,6 +76,7 @@
      });
      return suffix == ".exe";
  }
@@ -70,7 +70,7 @@ index 244a6e6..e4130a0 100644
  
  static std::string_view file_name(std::string_view path) {
      size_t slash = path.find_last_of("\\/");
-@@ -100,6 +132,50 @@ bool application_names_equal(std::string_view first, std::string_view second) {
+@@ -100,6 +132,50 @@
  #endif
  }
  
@@ -121,7 +121,7 @@ index 244a6e6..e4130a0 100644
  VpnConnectAction application_route(const std::vector<ApplicationRule> &rules, const std::optional<std::string> &owner) {
      if (rules.empty()) {
          return VPN_CA_DEFAULT;
-@@ -108,8 +184,13 @@ VpnConnectAction application_route(const std::vector<ApplicationRule> &rules, co
+@@ -108,8 +184,13 @@
          return VPN_CA_FORCE_REDIRECT;
      }
      for (const auto &rule : rules) {
@@ -135,7 +135,7 @@ index 244a6e6..e4130a0 100644
          if (matches) {
              return rule.action;
          }
-@@ -214,9 +295,119 @@ static std::optional<DWORD> connection_owner(const sockaddr *source, const socka
+@@ -214,9 +295,122 @@
  }
  #endif
  
@@ -148,7 +148,8 @@ index 244a6e6..e4130a0 100644
 +        if ((info.insi_vflag & INI_IPV4) == 0) {
 +            return false;
 +        }
-+        const auto *v4 = reinterpret_cast<const sockaddr_in *>(address); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
++        const auto *v4 =
++                reinterpret_cast<const sockaddr_in *>(address); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
 +        const in_addr &mine = local ? info.insi_laddr.ina_46.i46a_addr4 : info.insi_faddr.ina_46.i46a_addr4;
 +        int port = local ? info.insi_lport : info.insi_fport;
 +        return static_cast<uint16_t>(port) == v4->sin_port
@@ -157,7 +158,8 @@ index 244a6e6..e4130a0 100644
 +    if ((info.insi_vflag & INI_IPV6) == 0) {
 +        return false;
 +    }
-+    const auto *v6 = reinterpret_cast<const sockaddr_in6 *>(address); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
++    const auto *v6 =
++            reinterpret_cast<const sockaddr_in6 *>(address); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
 +    const in6_addr &mine = local ? info.insi_laddr.ina_6 : info.insi_faddr.ina_6;
 +    int port = local ? info.insi_lport : info.insi_fport;
 +    static constexpr in6_addr ANY = IN6ADDR_ANY_INIT;
@@ -218,7 +220,8 @@ index 244a6e6..e4130a0 100644
 +            bool matches = false;
 +            if (tcp && socket.soi_kind == SOCKINFO_TCP) {
 +                const in_sockinfo &in = socket.soi_proto.pri_tcp.tcpsi_ini;
-+                matches = same_address(in, source, true) && (destination == nullptr || same_address(in, destination, false));
++                matches = same_address(in, source, true)
++                        && (destination == nullptr || same_address(in, destination, false));
 +            } else if (!tcp && socket.soi_kind == SOCKINFO_IN && socket.soi_protocol == IPPROTO_UDP) {
 +                matches = same_address(socket.soi_proto.pri_in, source, true);
 +            }
@@ -257,10 +260,9 @@ index 244a6e6..e4130a0 100644
      if (!pid) {
          return std::nullopt;
 diff --git a/trusttunnel/src/config.cpp b/trusttunnel/src/config.cpp
-index a4a48d4..0534389 100644
 --- a/trusttunnel/src/config.cpp
 +++ b/trusttunnel/src/config.cpp
-@@ -338,7 +338,7 @@ std::optional<TrustTunnelConfig> TrustTunnelConfig::build_config(const toml::tab
+@@ -510,7 +510,7 @@
                  result.application_rules.push_back({*process_name, true, connect_action});
              }
          }
@@ -270,26 +272,25 @@ index a4a48d4..0534389 100644
              return std::nullopt;
          }
 diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/test_application_routes.cpp
-index 46ac107..2016607 100644
 --- a/trusttunnel/test/test_application_routes.cpp
 +++ b/trusttunnel/test/test_application_routes.cpp
-@@ -8,6 +8,15 @@
- #include <windows.h>
- #endif
+@@ -6,6 +6,15 @@
  
+ #ifdef _WIN32
+ #include <windows.h>
++#endif
++
 +#ifdef __APPLE__
 +#include <arpa/inet.h>
 +#include <netinet/in.h>
-+#include <sys/socket.h>
 +#include <signal.h>
++#include <sys/socket.h>
 +#include <sys/wait.h>
 +#include <unistd.h>
-+#endif
-+
- using namespace ag;
+ #endif
  
- TEST(SessionPolicy, KeepEstablishedTunnelGuardOnFailureUntilExplicitStop) {
-@@ -17,6 +26,7 @@ TEST(SessionPolicy, KeepEstablishedTunnelGuardOnFailureUntilExplicitStop) {
+ using namespace ag;
+@@ -17,6 +26,7 @@
      EXPECT_FALSE(retain_kill_switch(true, true, true));
  }
  
@@ -297,7 +298,7 @@ index 46ac107..2016607 100644
  TEST(ApplicationRoutes, ValidateFullExecutablePaths) {
      EXPECT_TRUE(valid_application_path("C:\\Program Files\\Browser\\browser.exe"));
      EXPECT_TRUE(valid_application_path("D:\\Apps\\BROWSER.EXE"));
-@@ -66,6 +76,108 @@ TEST(ApplicationRoutes, UnknownOwnershipUsesVpnAndKnownNonMatchesKeepDestination
+@@ -66,6 +76,110 @@
      EXPECT_EQ(application_route(rules, "D:\\Apps\\direct.exe"), VPN_CA_DEFAULT);
      EXPECT_FALSE(application_for_connection(nullptr, nullptr, IPPROTO_TCP));
  }
@@ -324,7 +325,9 @@ index 46ac107..2016607 100644
 +    const std::string uis = "/Applications/UIS Operator Workplace.app/Contents/";
 +    EXPECT_EQ(application_route(rules, uis + "MacOS/UIS Operator Workplace"), VPN_CA_FORCE_REDIRECT);
 +    EXPECT_EQ(application_route(rules,
-+                      uis + "Frameworks/UIS Operator Workplace Helper (GPU).app/Contents/MacOS/UIS Operator Workplace Helper (GPU)"),
++                      uis
++                              + "Frameworks/UIS Operator Workplace Helper (GPU).app/Contents/MacOS/UIS Operator "
++                                "Workplace Helper (GPU)"),
 +            VPN_CA_FORCE_REDIRECT);
 +    EXPECT_EQ(application_route(rules, "/opt/uis/UIS Operator Workplace Helper"), VPN_CA_FORCE_REDIRECT);
 +    EXPECT_EQ(application_route(rules, "/opt/uis/uis operator workplace helper (renderer)"), VPN_CA_FORCE_REDIRECT);
@@ -406,7 +409,7 @@ index 46ac107..2016607 100644
  
  static const std::string BASE = R"(
  vpn_mode = "general"
-@@ -108,7 +220,7 @@ TEST(ApplicationRoutes, RejectInvalidConfigRatherThanIgnoringRules) {
+@@ -108,7 +222,7 @@
      auto by_name =
              toml::parse(BASE + "\n[[application_rules]]\nprocess_name = 'UIS Operator Workplace.exe'\naction = 'vpn'");
      ASSERT_TRUE(by_name);

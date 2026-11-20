@@ -1,38 +1,36 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 481f445..ae6488c 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -35,6 +35,8 @@ See [README.md](README.md) for full product details and
+@@ -35,6 +35,8 @@
  | `net/` | Network layer: HTTP sessions, TLS, QUIC, sockets, OS tunnel, DNS management, pinger |
  | `tcpip/` | TCP/IP stack: lwIP integration, TCP/UDP/ICMP raw handling, packet pool |
- | `trusttunnel/` | CLI client app, config parsing; contains Rust sub-crates: `deeplink-ffi/`, `settings/`, `setup_wizard/` |
-+| `trusttunnel/src/application_routes.cpp` | Windows process-owner lookup and per-executable routing policy |
+ | `trusttunnel/` | CLI client app, config parsing; contains Rust sub-crates: `deeplink-ffi/`, `settings/`, `setup_wizard/` (wizard library), `client-ffi/` (C++ client FFI) |
++| `trusttunnel/src/application_routes.cpp` | Process-owner lookup and per-application routing policy |
 +| `trusttunnel/include/vpn/trusttunnel/session_policy.h` | Established kill-switch session retention policy |
  | `platform/android/` | Android adapter (Kotlin/Gradle) |
  | `platform/apple/` | Apple adapter (Swift/ObjC, CocoaPods, XCFramework) |
  | `platform/windows/` | Windows adapter (C++/CMake) |
 diff --git a/Makefile b/Makefile
-index dfb0b17..b7fd2ce 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -188,20 +188,25 @@ clang-tidy: compile_commands
+@@ -199,20 +199,26 @@
  
  ## Check c++ code formatting with clangd-tidy.
  .PHONY: clangd-tidy
 +ifeq ($(OS),Windows_NT)
 +clangd-tidy:
-+	@echo "clangd-tidy skipped on Windows: clangd LSP is unstable here; clang-format and clippy still enforced."
++	@echo "clangd-tidy skipped on Windows: clang-format and clippy remain enforced."
 +else
  clangd-tidy: compile_commands
  ifeq ($(SKIP_VENV),1)
 -	jq -r '.[] | select(.file | endswith(".cpp")) | .file' $(COMPILE_COMMANDS) \
 -		| grep -vE '(^|/)(third-party)(/|$$)' \
 -		| sort -u \
--		| xargs clangd-tidy -p $(BUILD_DIR) --tqdm -j$(NPROC)
+-		| xargs clangd-tidy -p $(BUILD_DIR) --tqdm -j$(CLANGD_TIDY_JOBS)
 +	jq -jr '.[] | select(.file | endswith(".cpp")) | .file, "\u0000"' $(COMPILE_COMMANDS) \
 +		| grep -zvE '(^|/)(third-party)(/|$$)' \
 +		| sort -zu \
-+		| xargs -0 clangd-tidy -p $(BUILD_DIR) --tqdm -j$(NPROC)
++		| xargs -0 clangd-tidy -p $(BUILD_DIR) --tqdm -j$(CLANGD_TIDY_JOBS)
  else
  	python3 -m venv env && \
  	. env/bin/activate && \
@@ -40,20 +38,20 @@ index dfb0b17..b7fd2ce 100644
 -	jq -r '.[] | select(.file | endswith(".cpp")) | .file' $(COMPILE_COMMANDS) \
 -		| grep -vE '(^|/)(third-party)(/|$$)' \
 -		| sort -u \
--		| xargs clangd-tidy -p $(BUILD_DIR) --tqdm -j$(NPROC)
+-		| xargs clangd-tidy -p $(BUILD_DIR) --tqdm -j$(CLANGD_TIDY_JOBS)
 +	jq -jr '.[] | select(.file | endswith(".cpp")) | .file, "\u0000"' $(COMPILE_COMMANDS) \
 +		| grep -zvE '(^|/)(third-party)(/|$$)' \
 +		| sort -zu \
-+		| xargs -0 clangd-tidy -p $(BUILD_DIR) --tqdm -j$(NPROC)
++		| xargs -0 clangd-tidy -p $(BUILD_DIR) --tqdm -j$(CLANGD_TIDY_JOBS)
 +endif
++
  endif
  
  ## Lint markdown files.
 diff --git a/core/src/upstream_multiplexer.h b/core/src/upstream_multiplexer.h
-index 780bb6c..387221b 100644
 --- a/core/src/upstream_multiplexer.h
 +++ b/core/src/upstream_multiplexer.h
-@@ -16,7 +16,9 @@ struct UpstreamInfo;
+@@ -16,7 +16,9 @@
  class UpstreamMultiplexer : public ServerUpstream {
  public:
      // Maximum number of upstreams
@@ -65,10 +63,9 @@ index 780bb6c..387221b 100644
      static constexpr size_t NEW_UPSTREAM_CONNECTIONS_NUM_THRESHOLD = 5;
  
 diff --git a/core/test/test_upstream_multiplexer.cpp b/core/test/test_upstream_multiplexer.cpp
-index eae039d..6804c84 100644
 --- a/core/test/test_upstream_multiplexer.cpp
 +++ b/core/test/test_upstream_multiplexer.cpp
-@@ -285,7 +285,7 @@ TEST_F(UpstreamMuxTest, LeastLoaded) {
+@@ -285,7 +285,7 @@
      }
      ASSERT_EQ(g_upstreams.size(), UpstreamMultiplexer::DEFAULT_UPSTREAMS_NUM);
  
@@ -78,7 +75,6 @@ index eae039d..6804c84 100644
      int id_1 = g_upstreams.begin()->first;
      int id_2 = std::next(g_upstreams.begin())->first;
 diff --git a/rust-toolchain.toml b/rust-toolchain.toml
-index 4933b3b..1bdafd5 100644
 --- a/rust-toolchain.toml
 +++ b/rust-toolchain.toml
 @@ -1,2 +1,3 @@
@@ -86,10 +82,9 @@ index 4933b3b..1bdafd5 100644
  channel = "1.95"
 +components = ["clippy", "rustfmt"]
 diff --git a/scripts/bootstrap_conan_deps.py b/scripts/bootstrap_conan_deps.py
-index fdb41f4..f492b44 100755
 --- a/scripts/bootstrap_conan_deps.py
 +++ b/scripts/bootstrap_conan_deps.py
-@@ -70,6 +70,21 @@ def revision_for_version(version):
+@@ -70,6 +70,21 @@
      return "v" + version
  
  
@@ -111,7 +106,7 @@ index fdb41f4..f492b44 100755
  def export_conan(repo_dir, version):
      """
      Check out the revision matching `version` and export the package to the
-@@ -79,8 +94,7 @@ def export_conan(repo_dir, version):
+@@ -79,8 +94,7 @@
      """
      subprocess.run(["git", "-C", repo_dir, "checkout", revision_for_version(version)],
                     check=True)
@@ -121,7 +116,7 @@ index fdb41f4..f492b44 100755
  
  
  with open(os.path.join(project_dir, "conanfile.py"), "r") as file:
-@@ -105,7 +119,7 @@ try:
+@@ -105,7 +119,7 @@
                      and ('@adguard/oss"' in line):
                  nlc_versions.append(line.split('@')[0].split('/')[1])
  
@@ -131,10 +126,9 @@ index fdb41f4..f492b44 100755
      remove_dir_if_exists(dns_libs_dir)
  
 diff --git a/trusttunnel/CMakeLists.txt b/trusttunnel/CMakeLists.txt
-index ddc2305..c98c866 100644
 --- a/trusttunnel/CMakeLists.txt
 +++ b/trusttunnel/CMakeLists.txt
-@@ -23,6 +23,7 @@ if (MSVC)
+@@ -23,6 +23,7 @@
  endif (MSVC)
  
  set(SOURCE_FILES
@@ -142,7 +136,7 @@ index ddc2305..c98c866 100644
          src/config.cpp
          src/client.cpp
          src/utils.cpp
-@@ -42,6 +43,9 @@ find_package(tomlplusplus REQUIRED)
+@@ -42,6 +43,9 @@
  find_package(nlohmann_json REQUIRED)
  
  target_link_libraries(vpnlibs_trusttunnel vpnlibs_core cxxopts::cxxopts)
@@ -152,14 +146,14 @@ index ddc2305..c98c866 100644
  target_link_libraries(vpnlibs_trusttunnel magic_enum::magic_enum)
  target_link_libraries(vpnlibs_trusttunnel tomlplusplus::tomlplusplus)
  target_link_libraries(vpnlibs_trusttunnel nlohmann_json::nlohmann_json)
-@@ -314,3 +318,4 @@ include(${VPN_LIB_DIR}/cmake/add_unit_test.cmake)
- set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/test)
+@@ -332,3 +336,5 @@
  
  add_unit_test(test_persistent_ring_buffer "${TEST_DIR}" "" TRUE TRUE)
+ add_unit_test(test_trusttunnel_config "${TEST_DIR}" "" TRUE TRUE)
++
 +add_unit_test(test_application_routes "${TEST_DIR}" "" TRUE TRUE)
 diff --git a/trusttunnel/include/vpn/trusttunnel/application_routes.h b/trusttunnel/include/vpn/trusttunnel/application_routes.h
 new file mode 100644
-index 0000000..ed454cd
 --- /dev/null
 +++ b/trusttunnel/include/vpn/trusttunnel/application_routes.h
 @@ -0,0 +1,27 @@
@@ -191,10 +185,9 @@ index 0000000..ed454cd
 +
 +} // namespace ag
 diff --git a/trusttunnel/include/vpn/trusttunnel/client.h b/trusttunnel/include/vpn/trusttunnel/client.h
-index 9306dd6..4a9ee04 100644
 --- a/trusttunnel/include/vpn/trusttunnel/client.h
 +++ b/trusttunnel/include/vpn/trusttunnel/client.h
-@@ -104,6 +104,7 @@ private:
+@@ -111,6 +111,7 @@
      const ag::Logger m_logger{"TRUSTTUNNEL_CLIENT"};
      std::atomic<Vpn *> m_vpn = nullptr;
      TrustTunnelConfig m_config;
@@ -203,7 +196,6 @@ index 9306dd6..4a9ee04 100644
      DeclPtr<VpnEventLoop, &vpn_event_loop_destroy> m_extra_loop = nullptr;
      std::unique_ptr<ag::VpnOsTunnel> m_tunnel = nullptr;
 diff --git a/trusttunnel/include/vpn/trusttunnel/config.h b/trusttunnel/include/vpn/trusttunnel/config.h
-index 4e3a9ce..7fdc46a 100644
 --- a/trusttunnel/include/vpn/trusttunnel/config.h
 +++ b/trusttunnel/include/vpn/trusttunnel/config.h
 @@ -8,6 +8,7 @@
@@ -214,7 +206,7 @@ index 4e3a9ce..7fdc46a 100644
  #include "vpn/utils.h"
  #include "vpn/vpn.h"
  
-@@ -66,6 +67,7 @@ struct TrustTunnelConfig {
+@@ -68,6 +69,7 @@
      std::string exclusions_scannable_ports;         // Empty = use default list
      std::string log_file_path;
      std::string exclusions;
@@ -224,7 +216,6 @@ index 4e3a9ce..7fdc46a 100644
      Location location;
 diff --git a/trusttunnel/include/vpn/trusttunnel/session_policy.h b/trusttunnel/include/vpn/trusttunnel/session_policy.h
 new file mode 100644
-index 0000000..76f8ea4
 --- /dev/null
 +++ b/trusttunnel/include/vpn/trusttunnel/session_policy.h
 @@ -0,0 +1,9 @@
@@ -239,7 +230,6 @@ index 0000000..76f8ea4
 +} // namespace ag
 diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/application_routes.cpp
 new file mode 100644
-index 0000000..244a6e6
 --- /dev/null
 +++ b/trusttunnel/src/application_routes.cpp
 @@ -0,0 +1,255 @@
@@ -499,10 +489,9 @@ index 0000000..244a6e6
 +
 +} // namespace ag
 diff --git a/trusttunnel/src/client.cpp b/trusttunnel/src/client.cpp
-index cdb7649..6da03e4 100644
 --- a/trusttunnel/src/client.cpp
 +++ b/trusttunnel/src/client.cpp
-@@ -21,6 +21,7 @@ TrustTunnelClient::TrustTunnelClient(TrustTunnelConfig &&config, VpnCallbacks &&
+@@ -21,6 +21,7 @@
          : m_config(std::move(config))
          , m_extra_loop(vpn_event_loop_create())
          , m_callbacks(std::move(callbacks)) {
@@ -510,7 +499,7 @@ index cdb7649..6da03e4 100644
      if (!m_config.log_file_path.empty()) {
          m_logfile_handler.emplace(m_config.log_file_path);
          m_logtofile.emplace(m_logfile_handler->get_file());
-@@ -504,6 +505,10 @@ void TrustTunnelClient::vpn_handler(void *, VpnEvent what, void *data) {
+@@ -521,6 +522,10 @@
          struct TaskContext {
              VpnConnectionInfo *info;
              Vpn *vpn;
@@ -521,7 +510,7 @@ index cdb7649..6da03e4 100644
          };
          auto *task_context = new TaskContext;
          const VpnConnectRequestEvent *event = (VpnConnectRequestEvent *) data;
-@@ -512,6 +517,15 @@ void TrustTunnelClient::vpn_handler(void *, VpnEvent what, void *data) {
+@@ -529,6 +534,15 @@
          info->appname = safe_to_string_view(event->app_name).empty() ? "trusttunnel_client" : event->app_name;
          task_context->info = info;
          task_context->vpn = m_vpn;
@@ -537,7 +526,7 @@ index cdb7649..6da03e4 100644
          vpn_event_loop_submit(m_extra_loop.get(),
                  {
                          .arg = (void *) task_context,
-@@ -520,6 +534,11 @@ void TrustTunnelClient::vpn_handler(void *, VpnEvent what, void *data) {
+@@ -537,6 +551,11 @@
                                      auto *context = (TaskContext *) arg;
                                      auto *info = context->info;
                                      if (context->vpn) {
@@ -550,7 +539,6 @@ index cdb7649..6da03e4 100644
                                      }
                                  },
 diff --git a/trusttunnel/src/config.cpp b/trusttunnel/src/config.cpp
-index 4005d44..a4a48d4 100644
 --- a/trusttunnel/src/config.cpp
 +++ b/trusttunnel/src/config.cpp
 @@ -1,3 +1,4 @@
@@ -558,7 +546,7 @@ index 4005d44..a4a48d4 100644
  #include <common/logger.h>
  #include <cstdio>
  #include <functional>
-@@ -301,6 +302,49 @@ std::optional<TrustTunnelConfig> TrustTunnelConfig::build_config(const toml::tab
+@@ -473,6 +474,49 @@
  
      result.ssl_session_storage_path = config["ssl_session_cache_path"].value<std::string_view>();
  
@@ -609,10 +597,9 @@ index 4005d44..a4a48d4 100644
          for (const auto &e : *x) {
              if (std::optional ex = e.value<std::string_view>(); ex.has_value() && !ex->empty()) {
 diff --git a/trusttunnel/src/trusttunnel_client.cpp b/trusttunnel/src/trusttunnel_client.cpp
-index 5aa4ea5..58cffad 100644
 --- a/trusttunnel/src/trusttunnel_client.cpp
 +++ b/trusttunnel/src/trusttunnel_client.cpp
-@@ -22,6 +22,7 @@
+@@ -26,6 +26,7 @@
  #include "vpn/trusttunnel/auto_network_monitor.h"
  #include "vpn/trusttunnel/client.h"
  #include "vpn/trusttunnel/config.h"
@@ -620,7 +607,7 @@ index 5aa4ea5..58cffad 100644
  #include "vpn/trusttunnel/version.h"
  
  #ifdef __mips__
-@@ -52,7 +53,7 @@ static std::weak_ptr<TrustTunnelClient> g_client;
+@@ -56,7 +57,7 @@
  
  static std::function<void(SocketProtectEvent *)> get_protect_socket_callback(const TrustTunnelConfig &config);
  static std::function<void(VpnVerifyCertificateEvent *)> get_verify_certificate_callback();
@@ -629,7 +616,7 @@ index 5aa4ea5..58cffad 100644
  static std::function<void(VpnConnectionInfoEvent *)> get_connection_info_callback();
  
  #ifdef _WIN32
-@@ -194,7 +195,8 @@ int run_client(const cxxopts::ParseResult &cli_args) {
+@@ -260,7 +261,8 @@
      VpnCallbacks callbacks = {
              .protect_handler = get_protect_socket_callback(config),
              .verify_handler = get_verify_certificate_callback(),
@@ -639,7 +626,7 @@ index 5aa4ea5..58cffad 100644
              .connection_info_handler = get_connection_info_callback(),
      };
  
-@@ -324,13 +326,17 @@ static std::function<void(VpnVerifyCertificateEvent *)> get_verify_certificate_c
+@@ -390,12 +392,16 @@
      };
  }
  
@@ -651,15 +638,14 @@ index 5aa4ea5..58cffad 100644
          case VPN_SS_DISCONNECTED:
              if (event->error.code != 0) {
                  errlog(g_logger, "Error: {} {}", event->error.code, safe_to_string_view(event->error.text));
-             }
++            }
 +            if (ag::retain_kill_switch(keep_tunnel, connected_once->load(), !keep_running.load())) {
 +                infolog(g_logger, "Kill switch active; awaiting explicit stop");
 +                return;
-+            }
+             }
              stop_trusttunnel_client();
              break;
-         case VPN_SS_WAITING_RECOVERY:
-@@ -339,6 +345,7 @@ static std::function<void(VpnStateChangedEvent *)> get_state_changed_callback()
+@@ -405,6 +411,7 @@
                      safe_to_string_view(event->waiting_recovery_info.error.text));
              break;
          case VPN_SS_CONNECTED: {
@@ -669,7 +655,6 @@ index 5aa4ea5..58cffad 100644
          }
 diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/test_application_routes.cpp
 new file mode 100644
-index 0000000..46ac107
 --- /dev/null
 +++ b/trusttunnel/test/test_application_routes.cpp
 @@ -0,0 +1,190 @@
@@ -863,3 +848,15 @@ index 0000000..46ac107
 +    testing::InitGoogleTest(&argc, argv);
 +    return RUN_ALL_TESTS();
 +}
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,8 @@
+ ### Added
+ 
+ ### Changed
++
++- Preserve Netlane per-application routing, established kill-switch recovery, and DNS-through-VPN integration on TrustTunnel Client 1.3.0.
+ 
+ ### Deprecated
+ 
