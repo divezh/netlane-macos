@@ -45,8 +45,9 @@ jobs:
           key: engine-${{ hashFiles('engine/build-engine.sh', 'engine/upstream/*.patch', 'Sources/NetlaneCore/Session.swift') }}
 
       - name: Conan cache
+        id: conan
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.conan2
           key: conan-${{ runner.os }}-${{ hashFiles('engine/upstream/*.patch') }}
@@ -67,6 +68,13 @@ jobs:
           npm install -g markdownlint-cli
           command -v rustup >/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"; }
           engine/build-engine.sh
+
+      - name: Save built Conan dependencies
+        if: always() && steps.conan.outputs.cache-primary-key != '' && steps.conan.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.conan2
+          key: ${{ steps.conan.outputs.cache-primary-key }}
 
       - name: Upload engine
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

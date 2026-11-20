@@ -1,18 +1,19 @@
 diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/application_routes.cpp
+index 244a6e6..ca87691 100644
 --- a/trusttunnel/src/application_routes.cpp
 +++ b/trusttunnel/src/application_routes.cpp
 @@ -2,6 +2,7 @@
- 
+
  #include <algorithm>
  #include <cctype>
 +#include <cstdint>
  #include <cstring>
- 
+
  #ifdef _WIN32
-@@ -9,6 +10,15 @@
+@@ -9,10 +10,19 @@
  #include <windows.h>
  #endif
- 
+
 +#ifdef __APPLE__
 +#include <arpa/inet.h>
 +#include <libproc.h>
@@ -23,12 +24,17 @@ diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/applicatio
 +#endif
 +
  namespace ag {
- 
+
  static std::string normalized_path(std::string_view path) {
-@@ -20,6 +30,19 @@
+-    if (path.starts_with("\\\\?\\")) {
++    if (path.starts_with(R"(\\?\)")) {
+         path.remove_prefix(4);
+     }
+     std::string result(path);
+@@ -20,6 +30,19 @@ static std::string normalized_path(std::string_view path) {
      return result;
  }
- 
+
 +#ifdef __APPLE__
 +static bool has_control_characters(std::string_view text) {
 +    return std::ranges::any_of(text, [](unsigned char c) {
@@ -45,13 +51,12 @@ diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/applicatio
  bool valid_application_path(std::string_view path) {
      if (path.size() < 8 || path.size() > 4096 || !std::isalpha(static_cast<unsigned char>(path[0])) || path[1] != ':'
              || path[2] != '\\' || path.find("\\..\\") != std::string_view::npos
-@@ -33,7 +56,15 @@
+@@ -33,7 +56,15 @@ bool valid_application_path(std::string_view path) {
      });
      return suffix == ".exe";
  }
--
 +#endif
-+
+
 +#ifdef __APPLE__
 +// macOS: the executable's file name as Activity Monitor shows it, e.g. "Jivo" (Clash PROCESS-NAME).
 +bool valid_process_name(std::string_view name) {
@@ -62,18 +67,18 @@ diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/applicatio
  bool valid_process_name(std::string_view name) {
      if (name.size() < 5 || name.size() > 255 || name.find_first_of("\\/:*?\"<>|\r\n") != std::string_view::npos
              || name.find('\0') != std::string_view::npos) {
-@@ -45,6 +76,7 @@
+@@ -45,6 +76,7 @@ bool valid_process_name(std::string_view name) {
      });
      return suffix == ".exe";
  }
 +#endif
- 
+
  static std::string_view file_name(std::string_view path) {
      size_t slash = path.find_last_of("\\/");
-@@ -100,6 +132,50 @@
+@@ -100,6 +132,50 @@ bool application_names_equal(std::string_view first, std::string_view second) {
  #endif
  }
- 
+
 +#ifdef __APPLE__
 +static bool ascii_iequal(std::string_view a, std::string_view b) {
 +    return std::ranges::equal(a, b, [](unsigned char x, unsigned char y) {
@@ -121,7 +126,7 @@ diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/applicatio
  VpnConnectAction application_route(const std::vector<ApplicationRule> &rules, const std::optional<std::string> &owner) {
      if (rules.empty()) {
          return VPN_CA_DEFAULT;
-@@ -108,8 +184,13 @@
+@@ -108,8 +184,13 @@ VpnConnectAction application_route(const std::vector<ApplicationRule> &rules, co
          return VPN_CA_FORCE_REDIRECT;
      }
      for (const auto &rule : rules) {
@@ -135,10 +140,10 @@ diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/applicatio
          if (matches) {
              return rule.action;
          }
-@@ -214,9 +295,122 @@
+@@ -214,9 +295,122 @@ static std::optional<DWORD> connection_owner(const sockaddr *source, const socka
  }
  #endif
- 
+
 +#ifdef __APPLE__
 +// libproc lists every process's sockets (the engine runs as root, so it sees all of them): the owner is
 +// the process with a TCP socket from this source to this destination, or a UDP socket bound to this
@@ -260,9 +265,10 @@ diff --git a/trusttunnel/src/application_routes.cpp b/trusttunnel/src/applicatio
      if (!pid) {
          return std::nullopt;
 diff --git a/trusttunnel/src/config.cpp b/trusttunnel/src/config.cpp
+index a82daf8..ce1280d 100644
 --- a/trusttunnel/src/config.cpp
 +++ b/trusttunnel/src/config.cpp
-@@ -510,7 +510,7 @@
+@@ -510,7 +510,7 @@ std::optional<TrustTunnelConfig> TrustTunnelConfig::build_config(const toml::tab
                  result.application_rules.push_back({*process_name, true, connect_action});
              }
          }
@@ -272,14 +278,13 @@ diff --git a/trusttunnel/src/config.cpp b/trusttunnel/src/config.cpp
              return std::nullopt;
          }
 diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/test_application_routes.cpp
+index 46ac107..462acc1 100644
 --- a/trusttunnel/test/test_application_routes.cpp
 +++ b/trusttunnel/test/test_application_routes.cpp
-@@ -6,6 +6,15 @@
- 
- #ifdef _WIN32
+@@ -8,6 +8,15 @@
  #include <windows.h>
-+#endif
-+
+ #endif
+
 +#ifdef __APPLE__
 +#include <arpa/inet.h>
 +#include <netinet/in.h>
@@ -287,18 +292,20 @@ diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/tes
 +#include <sys/socket.h>
 +#include <sys/wait.h>
 +#include <unistd.h>
- #endif
- 
++#endif
++
  using namespace ag;
-@@ -17,6 +26,7 @@
+
+ TEST(SessionPolicy, KeepEstablishedTunnelGuardOnFailureUntilExplicitStop) {
+@@ -17,6 +26,7 @@ TEST(SessionPolicy, KeepEstablishedTunnelGuardOnFailureUntilExplicitStop) {
      EXPECT_FALSE(retain_kill_switch(true, true, true));
  }
- 
+
 +#ifndef __APPLE__
  TEST(ApplicationRoutes, ValidateFullExecutablePaths) {
      EXPECT_TRUE(valid_application_path("C:\\Program Files\\Browser\\browser.exe"));
      EXPECT_TRUE(valid_application_path("D:\\Apps\\BROWSER.EXE"));
-@@ -66,6 +76,110 @@
+@@ -66,6 +76,124 @@ TEST(ApplicationRoutes, UnknownOwnershipUsesVpnAndKnownNonMatchesKeepDestination
      EXPECT_EQ(application_route(rules, "D:\\Apps\\direct.exe"), VPN_CA_DEFAULT);
      EXPECT_FALSE(application_for_connection(nullptr, nullptr, IPPROTO_TCP));
  }
@@ -382,20 +389,34 @@ diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/tes
 +    if (child == 0) {
 +        close(pipe_fds[0]);
 +        int socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
++        if (socket < 0) {
++            _exit(1);
++        }
 +        sockaddr_in local{};
 +        local.sin_family = AF_INET;
 +        local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-+        bind(socket, reinterpret_cast<const sockaddr *>(&local), sizeof(local));
++        if (bind(socket, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) != 0) {
++            _exit(1);
++        }
 +        socklen_t length = sizeof(local);
-+        getsockname(socket, reinterpret_cast<sockaddr *>(&local), &length);
-+        write(pipe_fds[1], &local, sizeof(local));
++        if (getsockname(socket, reinterpret_cast<sockaddr *>(&local), &length) != 0) {
++            _exit(1);
++        }
++        if (write(pipe_fds[1], &local, sizeof(local)) != static_cast<ssize_t>(sizeof(local))) {
++            _exit(1);
++        }
 +        sleep(10);
 +        _exit(0);
 +    }
 +    close(pipe_fds[1]);
 +    sockaddr_in local{};
-+    ASSERT_EQ(read(pipe_fds[0], &local, sizeof(local)), static_cast<ssize_t>(sizeof(local)));
++    ssize_t received = read(pipe_fds[0], &local, sizeof(local));
 +    close(pipe_fds[0]);
++    if (received != static_cast<ssize_t>(sizeof(local))) {
++        kill(child, SIGKILL);
++        waitpid(child, nullptr, 0);
++        FAIL() << "Child could not prepare a UDP socket";
++    }
 +    auto owner = application_for_connection(reinterpret_cast<const sockaddr *>(&local), nullptr, IPPROTO_UDP);
 +    auto tcp = application_for_connection(reinterpret_cast<const sockaddr *>(&local), nullptr, IPPROTO_TCP);
 +    kill(child, SIGKILL);
@@ -406,10 +427,10 @@ diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/tes
 +}
 +// NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
 +#endif
- 
+
  static const std::string BASE = R"(
  vpn_mode = "general"
-@@ -108,7 +222,7 @@
+@@ -108,7 +236,7 @@ TEST(ApplicationRoutes, RejectInvalidConfigRatherThanIgnoringRules) {
      auto by_name =
              toml::parse(BASE + "\n[[application_rules]]\nprocess_name = 'UIS Operator Workplace.exe'\naction = 'vpn'");
      ASSERT_TRUE(by_name);
