@@ -16,14 +16,20 @@ echo "Netlane $VERSION"
 
 if [ "${1:-}" != "--no-test" ]; then swift test; fi
 
-# One build per architecture, joined with lipo: this also works without full Xcode.
-for arch in arm64 x86_64; do swift build -c release --triple "$arch-apple-macosx13.0"; done
+# One build per architecture, joined with lipo: this also works without full Xcode. Each architecture gets
+# its own scratch path and asks SwiftPM where its products are: the Swift Build backend (Xcode 27) puts them
+# in out/Products/Release instead of <triple>/release, and a shared .build would let the second overwrite the first.
+declare -a BIN
+for arch in arm64 x86_64; do
+    swift build -c release --triple "$arch-apple-macosx13.0" --scratch-path ".build/universal-$arch"
+    BIN+=("$(swift build -c release --triple "$arch-apple-macosx13.0" --scratch-path ".build/universal-$arch" --show-bin-path)")
+done
 
 APP=dist/Netlane.app
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/engine"
-lipo -create .build/arm64-apple-macosx/release/Netlane .build/x86_64-apple-macosx/release/Netlane -output "$APP/Contents/MacOS/Netlane"
-lipo -create .build/arm64-apple-macosx/release/NetlaneHelper .build/x86_64-apple-macosx/release/NetlaneHelper -output "$APP/Contents/Resources/NetlaneHelper"
+lipo -create "${BIN[0]}/Netlane" "${BIN[1]}/Netlane" -output "$APP/Contents/MacOS/Netlane"
+lipo -create "${BIN[0]}/NetlaneHelper" "${BIN[1]}/NetlaneHelper" -output "$APP/Contents/Resources/NetlaneHelper"
 cp scripts/install-helper.sh scripts/uninstall-helper.sh "$APP/Contents/Resources/"
 cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 sed "s/@VERSION@/$VERSION/g" packaging/Info.plist > "$APP/Contents/Info.plist"
