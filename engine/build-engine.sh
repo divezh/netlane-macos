@@ -5,8 +5,8 @@
 #   0003 — dns_all_through_vpn: every DNS query to the configured servers through the VPN.
 # Output: engine/dist/trusttunnel_client (universal: arm64 + x86_64) and engine/dist/LICENSE.
 #
-# Needs: Xcode or Command Line Tools, cmake, ninja, python3, rustup (installs the pinned toolchain).
-#   brew install cmake ninja && curl -sSf https://sh.rustup.rs | sh -s -- -y
+# Needs: Xcode Command Line Tools, cmake, ninja, python3, rustup, LLVM 21 linters and markdownlint-cli.
+# See README.md for the linter-only PATH setup; compilation uses Apple Clang.
 # First build takes long (Conan builds OpenSSL and the other dependencies); later ones reuse the cache.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

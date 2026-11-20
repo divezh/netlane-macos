@@ -39,9 +39,17 @@ curl -fsSL https://raw.githubusercontent.com/divezh/netlane-macos/main/uninstall
 
 ## Сборка
 
+Нужны Xcode Command Line Tools и rustup. Скрипт сам устанавливает закреплённую upstream версию Rust и targets для Intel и Apple Silicon. Сборка включает тесты и линтеры; LLVM 21 ниже используется только для линтеров, компилятором остаётся Apple Clang.
+
 ```sh
-brew install cmake ninja      # и rustup для сборки движка
-scripts/build-app.sh          # → dist/Netlane-macos.pkg и .zip
+brew install cmake ninja llvm@21 markdownlint-cli
+lint_tools="$PWD/.build/lint-tools"
+mkdir -p "$lint_tools"
+for tool in clang-format clangd clang-tidy run-clang-tidy; do
+  ln -sf "$(brew --prefix llvm@21)/bin/$tool" "$lint_tools/$tool"
+done
+PATH="$lint_tools:$HOME/.cargo/bin:$PATH" scripts/build-app.sh
+# → dist/Netlane-macos.pkg и .zip
 ```
 
 Релиз: поднять версию в `Sources/NetlaneCore/Support.swift` и CHANGELOG, опубликовать релиз `vX.Y.Z` — Actions соберёт его; установленные клиенты увидят его как обновление.
