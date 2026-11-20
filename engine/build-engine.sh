@@ -39,7 +39,10 @@ pip install -q -r requirements.txt "conan>=2.0.5,<3"
 export SKIP_VENV=1 TT_CLIENT_VERSION="$VERSION_LABEL"
 python3 scripts/bootstrap_conan_deps.py
 conan profile detect --exist-ok >/dev/null
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
+RUST_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+[ -n "$RUST_TOOLCHAIN" ] || { echo "missing upstream Rust toolchain" >&2; exit 1; }
+rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update \
+    --component cargo,rustc,clippy,rustfmt --target aarch64-apple-darwin,x86_64-apple-darwin
 
 for arch in arm64 x86_64; do
     make PRESET=clang-relwithdebinfo ARCH="$arch" BUILD_DIR="build_$arch" SKIP_BOOTSTRAP=1 build_trusttunnel_client
