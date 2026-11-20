@@ -39,6 +39,7 @@ pip install -q -r requirements.txt "conan>=2.0.5,<3"
 export SKIP_VENV=1 TT_CLIENT_VERSION="$VERSION_LABEL"
 python3 scripts/bootstrap_conan_deps.py
 conan profile detect --exist-ok >/dev/null
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
 for arch in arm64 x86_64; do
     make PRESET=clang-relwithdebinfo ARCH="$arch" BUILD_DIR="build_$arch" SKIP_BOOTSTRAP=1 build_trusttunnel_client
