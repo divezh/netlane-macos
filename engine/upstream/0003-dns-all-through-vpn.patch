@@ -14,7 +14,7 @@ diff --git a/core/include/vpn/vpn.h b/core/include/vpn/vpn.h
 +     */
 +    bool dns_all_through_upstreams;
  } VpnListenerConfig;
- 
+
  typedef struct {
 diff --git a/core/src/dns_handler.cpp b/core/src/dns_handler.cpp
 --- a/core/src/dns_handler.cpp
@@ -26,7 +26,7 @@ diff --git a/core/src/dns_handler.cpp b/core/src/dns_handler.cpp
 +    if (m_parameters.all_through_upstreams && m_client) {
 +        included = true;
 +    }
- 
+
      if (included && m_client) {
          log_handler(this, dbg, "{} qname: {} -> DNS proxy", info, request.name);
 diff --git a/core/src/dns_handler.h b/core/src/dns_handler.h
@@ -40,7 +40,7 @@ diff --git a/core/src/dns_handler.h b/core/src/dns_handler.h
 +     */
 +    bool all_through_upstreams = false;
  };
- 
+
  class DnsHandler : public DnsHandlerServerUpstreamBase, public DnsHandlerClientListenerBase {
 diff --git a/core/src/tunnel.cpp b/core/src/tunnel.cpp
 --- a/core/src/tunnel.cpp
@@ -68,7 +68,7 @@ diff --git a/trusttunnel/src/client.cpp b/trusttunnel/src/client.cpp
 --- a/trusttunnel/src/client.cpp
 +++ b/trusttunnel/src/client.cpp
 @@ -165,6 +165,7 @@
- 
+
      VpnListenerConfig listener_config = {
              .dns_upstreams = {.data = dns_upstreams.data(), .size = uint32_t(dns_upstreams.size())},
 +            .dns_all_through_upstreams = m_config.dns_all_through_vpn && !dns_upstreams.empty(),
@@ -91,7 +91,7 @@ diff --git a/trusttunnel/src/config.cpp b/trusttunnel/src/config.cpp
 +++ b/trusttunnel/src/config.cpp
 @@ -450,6 +450,7 @@
      }
- 
+
      result.killswitch_enabled = config["killswitch_enabled"].value_or<bool>(false);
 +    result.dns_all_through_vpn = config["dns_all_through_vpn"].value_or<bool>(false);
      if (const auto *x = config["killswitch_allow_ports"].as_array(); x != nullptr) {
@@ -117,6 +117,59 @@ diff --git a/trusttunnel/test/test_application_routes.cpp b/trusttunnel/test/tes
 +    ASSERT_TRUE(config);
 +    EXPECT_TRUE(config->dns_all_through_vpn);
 +}
- 
+
  TEST(ApplicationRoutes, RejectInvalidConfigRatherThanIgnoringRules) {
      for (const auto &rule : {"executable = 'browser.exe'\naction = 'direct'",
+diff --git a/core/test/test_dns_routing.cpp b/core/test/test_dns_routing.cpp
+index faa4777..d42f5ce 100644
+--- a/core/test/test_dns_routing.cpp
++++ b/core/test/test_dns_routing.cpp
+@@ -1060,6 +1060,48 @@ TEST_F(DnsRoutingAllProxies, IpVersionsUser) {
+     }
+ }
+
++// Netlane's application routing cannot infer an application from a shared DNS resolver.
++// The opt-in flag must override domain exclusions for both UDP and TCP queries.
++class NetlaneDnsAllThroughVpn : public DnsRoutingAllProxies,
++                                public testing::WithParamInterface<std::tuple<bool, VpnMode, int>> {};
++
++TEST_P(NetlaneDnsAllThroughVpn, OverridesDomainExclusions) {
++    auto [enabled, mode, protocol] = GetParam();
++    vpn.listener_config.dns_all_through_upstreams = enabled;
++    ASSERT_TRUE(vpn.tunnel->update_dns_handler_parameters());
++    vpn.update_exclusions(mode, mode == VPN_MODE_GENERAL ? "example.org" : "");
++    TunnelAddress dst = SocketAddress("8.8.8.8:53");
++    SocketAddress src("127.0.0.1:50001");
++    ClientConnectRequest event{
++            .id = vpn.listener_conn_id_generator.get(),
++            .protocol = protocol,
++            .src = &src,
++            .dst = &dst,
++            .app_name = "TestAppName",
++    };
++    ASSERT_NO_FATAL_FAILURE(raise_and_complete(event));
++    auto &expected_server = enabled ? user_server : system_server;
++    expected_server->expect({
++            .request =
++                    MockDnsServer::Request{
++                            .tcp = protocol == IPPROTO_TCP, .qtype = LDNS_RR_TYPE_A, .qname = "example.org."},
++            .response = MockDnsServer::Response{.rcode = LDNS_RCODE_REFUSED},
++    });
++    ASSERT_NO_FATAL_FAILURE(accept_and_send(event, "example.org.", LDNS_RR_TYPE_A));
++    vpn_event_loop_exit(ev_loop.get(), DEFAULT_TIMEOUT);
++    vpn_event_loop_run(ev_loop.get());
++    vpn_event_loop_finalize_exit(ev_loop.get());
++    EXPECT_EQ(enabled ? 1 : 0, user_complete);
++    EXPECT_EQ(enabled ? 0 : 1, system_complete);
++    EXPECT_EQ(0, user_unexpected);
++    EXPECT_EQ(0, system_unexpected);
++    EXPECT_EQ(0, system_ipv6_unexpected);
++}
++
++INSTANTIATE_TEST_SUITE_P(Netlane, NetlaneDnsAllThroughVpn,
++        testing::Combine(testing::Bool(), testing::Values(VPN_MODE_GENERAL, VPN_MODE_SELECTIVE),
++                testing::Values(IPPROTO_UDP, IPPROTO_TCP)));
++
+ TEST_F(DnsRoutingAllProxies, RecordTypes) {
+     TunnelAddress dst = SocketAddress("8.8.8.8:53");
+     SocketAddress src("127.0.0.1:50001");
