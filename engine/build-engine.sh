@@ -27,6 +27,9 @@ for patch in "$ROOT"/engine/upstream/*.patch; do
     git -C "$SRC" apply --check "$patch"
     git -C "$SRC" apply "$patch"
 done
+git -C "$SRC" add -N trusttunnel/include/vpn/trusttunnel/application_routes.h \
+    trusttunnel/include/vpn/trusttunnel/session_policy.h \
+    trusttunnel/src/application_routes.cpp trusttunnel/test/test_application_routes.cpp
 
 cd "$SRC"
 python3 -m venv env
