@@ -68,6 +68,22 @@ final class AppModel: ObservableObject {
 
     private var session: HelperSession?
     private var connectedServerId: String?
+    private var attemptRouting: Routing?
+    private var attemptDNS: [String] = []
+    private var attemptPath = ""
+    private var attemptServer: String?
+    @Published private(set) var lastAttempt: [String: String] = [:]
+    private func recordAttempt(_ outcome: String) {
+        if let id = attemptServer { lastAttempt[id] = attemptPath + " · " + outcome }
+    }
+    var settingsPending: Bool {
+        guard view == .connected, let profile = try? state.sessionProfile() else { return false }
+        return attemptRouting != nil && (attemptRouting != profile.routing || attemptDNS != profile.dnsServers)
+    }
+    func applyNetworkSettings() {
+        guard settingsPending else { return }
+        restartIfActive("Применяем правила и DNS…")
+    }
     private var wantStop = false
     private var restartAfterStop = false
     private var sawFailure = false
@@ -182,12 +198,14 @@ final class AppModel: ObservableObject {
             return "Вставьте ссылку подписки или сервера"
         }
         switch view {
-        case .connecting: return "Ожидаем подтверждения от VPN-сервера…"
+        case .connecting: return attemptPath + " · Подключение…"
         case .disconnecting: return "Движок завершает соединение."
         case .reconnecting: return "Восстанавливаем соединение" + (reconnectSeconds > 0 ? ": следующая попытка через \(reconnectSeconds) с" : "")
         case .killSwitch: return accessDenied ? "Доступ закрыт сервером. Нажмите «Отключиться», чтобы вернуть интернет." : "Нажмите «Отключиться», чтобы снять блокировку интернета."
         case .error: return errorText ?? "Соединение не установлено. Проверьте доступ, срок, квоту и выбранный транспорт."
         default:
+            if view == .idle, let last = lastAttempt[server.id] { return server.name + " · Последняя попытка: " + last }
+            if view == .connected && attemptPath.contains("→") { return server.name + " · " + attemptPath + " подключён" }
             var parts = [server.name, Server.transportTitle(server.effectiveTransport) + (server.isAuto ? " (авто)" : "")]
             if let ms = pings[server.id]?.milliseconds { parts.append("\(ms) мс") }
             return parts.joined(separator: " · ")
@@ -219,6 +237,10 @@ final class AppModel: ObservableObject {
         let profile: Profile
         do { profile = try state.sessionProfile() }
         catch { fail((error as? FormatError)?.message ?? "Профиль не прошёл проверку."); return }
+        attemptServer = server.id
+        attemptRouting = profile.routing
+        attemptDNS = profile.dnsServers
+        attemptPath = (triedFallback && fallbackServerId == server.id ? "HTTP/3 не подключился → " : "") + Server.transportTitle(profile.transport)
         view = .connecting; errorText = nil; sawFailure = false; accessDenied = false; wantStop = false; restartAfterStop = false
         Task {
             // The helper is installed at the first connection and replaced after an update.
@@ -276,6 +298,7 @@ final class AppModel: ObservableObject {
             switch event {
             case .started: break
             case .connected:
+                recordAttempt("подключено")
                 autoTask?.cancel()
                 view = .connected; errorText = nil; sawFailure = false; accessDenied = false
                 if sessionStart == nil { sessionStart = Date() }
@@ -320,13 +343,14 @@ final class AppModel: ObservableObject {
             if state.selectedServer != nil { connect(); return }
         }
         if wantStop { view = state.selectedServer == nil ? .noProfile : .idle; triedFallback = false }
-        else if sawFailure || !wasConnected { fail(errorText ?? "Соединение не установлено. Проверьте доступ, срок, квоту и выбранный транспорт.") }
+        else if sawFailure || !wasConnected { fail(errorText ?? (attemptPath + " — соединение не установлено.")) }
         else { fail("Соединение прервано: движок остановился. Подробности — в «Журнале».") }
         wantStop = false
         refreshIp(after: 1.5)
     }
 
     private func fail(_ text: String) {
+        recordAttempt(text.hasPrefix(attemptPath + " — ") ? "соединение не установлено" : text)
         errorText = text
         view = .error
         // «Авто» fell back to HTTP/2 and that failed too: the next attempt starts from HTTP/3 again.

@@ -30,7 +30,12 @@ struct HomeView: View {
             HStack {
                 Text("v" + AppInfo.version)
                 Spacer()
-                Text("Профиль хранится только на этом Mac")
+                if model.settingsPending {
+                    Text("Новые правила или DNS")
+                    Button("Переподключиться и применить") { model.applyNetworkSettings() }
+                } else {
+                    Text("Профиль хранится только на этом Mac")
+                }
             }
             .font(.system(size: 11)).foregroundColor(Theme.faint)
             .padding(.horizontal, 26).frame(height: 32)
@@ -160,7 +165,7 @@ private struct LocationTable: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(ping?.detail ?? "")
+        .help([model.lastAttempt[server.id], ping?.detail].compactMap { $0 }.joined(separator: "\n"))
         .contextMenu {
             Button("Проверить пинг") { model.checkPings() }
             Button("Открыть «Серверы»") { model.page = .servers }
