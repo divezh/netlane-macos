@@ -84,7 +84,6 @@ struct MenuBarContent: View {
         }
         Button("Выход") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
-
 }
 
 /// AppKit owns the single window and menu bar item on Monterey.
@@ -193,8 +192,7 @@ final class MontereyAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         if window?.isMiniaturized == true { window?.deminiaturize(nil) }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        }
+    }
 
     @objc private func quit() { NSApp.terminate(nil) }
-    }
 }
