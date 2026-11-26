@@ -144,7 +144,7 @@ struct RuleSetEditor: View {
     private func editor(_ text: Binding<String>) -> some View {
         TextEditor(text: text)
             .font(.system(size: 12, design: .monospaced))
-            .scrollContentBackground(.hidden)
+            .hideEditorBackground()
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 9).fill(Theme.card))
             .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.line))

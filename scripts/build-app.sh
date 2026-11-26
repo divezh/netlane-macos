@@ -21,8 +21,8 @@ if [ "${1:-}" != "--no-test" ]; then swift test; fi
 # in out/Products/Release instead of <triple>/release, and a shared .build would let the second overwrite the first.
 declare -a BIN
 for arch in arm64 x86_64; do
-    swift build -c release --triple "$arch-apple-macosx13.0" --scratch-path ".build/universal-$arch"
-    BIN+=("$(swift build -c release --triple "$arch-apple-macosx13.0" --scratch-path ".build/universal-$arch" --show-bin-path)")
+    swift build -c release --triple "$arch-apple-macosx12.0" --scratch-path ".build/universal-$arch"
+    BIN+=("$(swift build -c release --triple "$arch-apple-macosx12.0" --scratch-path ".build/universal-$arch" --show-bin-path)")
 done
 
 APP=dist/Netlane.app
@@ -36,6 +36,21 @@ sed "s/@VERSION@/$VERSION/g" packaging/Info.plist > "$APP/Contents/Info.plist"
 
 cp "$ENGINE" "$APP/Contents/Resources/engine/trusttunnel_client"
 chmod 755 "$APP/Contents/Resources/engine/trusttunnel_client"
+for binary in "$APP/Contents/MacOS/Netlane" "$APP/Contents/Resources/NetlaneHelper" "$APP/Contents/Resources/engine/trusttunnel_client"; do
+    for arch in arm64 x86_64; do
+        build_info=$(xcrun vtool -arch "$arch" -show-build "$binary")
+        if ! printf '%s\n' "$build_info" | awk '
+            $1 == "minos" || $1 == "version" {
+                split($2, version, ".")
+                if (version[1] + 0 < 12 || (version[1] + 0 == 12 && version[2] + 0 == 0 && version[3] + 0 == 0)) compatible = 1
+            }
+            END { exit !compatible }
+        '; then
+            echo "$binary ($arch) does not support macOS 12.0" >&2
+            exit 1
+        fi
+    done
+done
 ENGINE_LICENSE="$(dirname "$ENGINE")/LICENSE"
 [ -f "$ENGINE_LICENSE" ] && cp "$ENGINE_LICENSE" "$APP/Contents/Resources/engine/LICENSE.txt"
 

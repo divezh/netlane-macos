@@ -30,7 +30,7 @@ struct SettingsView: View {
                             .font(.system(size: 11)).foregroundColor(Theme.muted).fixedSize(horizontal: false, vertical: true)
                     }
                     TextEditor(text: $dns)
-                        .font(.system(size: 12, design: .monospaced)).scrollContentBackground(.hidden).padding(8).frame(height: 76)
+                        .font(.system(size: 12, design: .monospaced)).hideEditorBackground().padding(8).frame(height: 76)
                         .background(RoundedRectangle(cornerRadius: 9).fill(Theme.card)).overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.line))
                     HStack {
                         Text(dnsProblem ?? "По одному в строке: 1.1.1.1, 9.9.9.9:53, tls://dns.example или https://dns.example/dns-query. Пусто — стандартный DNS сервера.")

@@ -12,4 +12,8 @@ applyUpdateIfAsked()
 if let index = CommandLine.arguments.firstIndex(of: "--render"), CommandLine.arguments.count > index + 1 {
     MainActor.assumeIsolated { Render.run(to: CommandLine.arguments[index + 1]) }
 }
-NetlaneApp.main()
+if #available(macOS 13.0, *) {
+    NetlaneApp.main()
+} else {
+    MainActor.assumeIsolated { MontereyAppDelegate.run() }
+}

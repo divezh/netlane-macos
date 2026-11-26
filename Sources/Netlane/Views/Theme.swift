@@ -1,4 +1,15 @@
 import SwiftUI
+
+extension View {
+    @ViewBuilder
+    func hideEditorBackground() -> some View {
+        if #available(macOS 13.0, *) {
+            scrollContentBackground(.hidden)
+        } else {
+            self
+        }
+    }
+}
 import NetlaneCore
 
 /// The one palette of the client, the same as on Windows. Accent is for the main action and active

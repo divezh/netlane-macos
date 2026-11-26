@@ -14,4 +14,4 @@ var targets: [Target] = [
 targets.append(.executableTarget(name: "Netlane", dependencies: ["NetlaneCore"]))
 #endif
 
-let package = Package(name: "Netlane", platforms: [.macOS(.v13)], targets: targets)
+let package = Package(name: "Netlane", platforms: [.macOS(.v12)], targets: targets)

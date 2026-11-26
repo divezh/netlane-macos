@@ -131,7 +131,7 @@ struct AddSheet: View {
             PageHeader(title: "Добавить подписку или сервер", subtitle: "Вставьте ссылку подписки https://…/sub/… из панели. Один сервер по ссылке tt:// тоже подойдёт. Ссылку выдаёт администратор сервера.")
             TextEditor(text: $text)
                 .font(.system(size: 12, design: .monospaced))
-                .scrollContentBackground(.hidden)
+                .hideEditorBackground()
                 .padding(8)
                 .frame(height: 96)
                 .background(RoundedRectangle(cornerRadius: 9).fill(Theme.card))
